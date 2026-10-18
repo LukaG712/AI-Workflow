@@ -13,14 +13,43 @@ Open WebUI → orchestrator (OpenAI-compatible API)
 
 The improved prompt runs immediately with no approval step.
 
+## Before you start
+
+- **Linux machine or VM** — This guide assumes Debian/Ubuntu-style Linux (it uses `systemd`, `ufw`, and `cifs` for mounting).
+- **Junie CLI installed and logged in** — Install Junie CLI and log in as the **same Linux user** you'll run the orchestrator as. Junie needs access to its saved login session in your home directory.
+- **Ollama installed** — You need Ollama running on this machine. `setup.sh` can pull the model for you, but it doesn't install Ollama itself.
+- **Obsidian vault reachable** — Your vault must be accessible on this machine (for example, a mounted NAS share). See the next section.
+
+## Mounting your vault
+
+Before running `setup.sh`, your Obsidian vault must be mounted on this machine. This is **required** — the orchestrator needs to read and write your notes.
+
+### One-time mount
+
+```bash
+sudo mount -t cifs //nas-ip/share /mnt/vault -o username=...,password=...
+```
+
+### Persistent mount (survives reboots)
+
+Add an entry to `/etc/fstab`:
+
+```
+//nas-ip/share /mnt/vault cifs username=...,password=...,x-systemd.automount 0 0
+```
+
+Then run `sudo mount -a` to apply.
+
+**Tip:** Start with a scratch copy of your vault for your first runs, so you can verify the orchestrator's behavior before running against your real vault.
+
 ## Quick Start
 
 Get up and running in three steps:
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/your-user/AI-Workflow.git
-cd AI-Workflow
+git clone https://github.com/LukaG712/JunieOrchestrator.git
+cd JunieOrchestrator
 
 # 2. Run the setup script (installs dependencies, configures .env, pulls the model)
 ./setup.sh
@@ -29,9 +58,11 @@ cd AI-Workflow
 ./start.sh
 ```
 
+> **Important:** Make sure the service runs as the **same Linux user** that logged in to Junie — Junie needs access to its saved login session in your home directory.
+
 Then in Open WebUI, add a new **OpenAI API** connection with:
 
-- **Base URL**: `http://<this-machine-ip>:8000/v1`
+- **Base URL**: `http://<linux-machine-ip>:8000/v1`
 - **API Key**: The key printed by `setup.sh`
 
 That's it — you're ready to chat.
@@ -134,7 +165,7 @@ sudo systemctl start junie-orchestrator
 1. Go to **Admin Settings** → **Connections**
 2. Add a new **OpenAI API** connection
 3. Set the following:
-   - **Base URL**: `http://<vm-ip>:8000/v1`
+   - **Base URL**: `http://<linux-machine-ip>:8000/v1`
    - **API Key**: The value you set for `API_KEY` in `.env`
 4. Save and test the connection
 
@@ -225,19 +256,11 @@ Process a chat completion request through the orchestrator pipeline.
 
 Before running the orchestrator, you may need to:
 
-1. **Mount your NAS share** at `VAULT_PATH` (default `/mnt/vault`):
-   ```bash
-   sudo mount -t cifs //nas-ip/share /mnt/vault -o username=...,password=...
-   ```
-   Or use an `/etc/fstab` entry for persistent mounting.
-
-2. **Open the firewall** for the orchestrator port:
+1. **Open the firewall** for the orchestrator port:
    ```bash
    sudo ufw allow 8000/tcp
    ```
    Or configure your cloud/VM firewall rules accordingly.
-
-3. **Use a scratch copy of the vault** for your first runs. Point `VAULT_PATH` to a copy of your vault so you can verify the orchestrator's behavior before running against your real vault.
 
 ### Ollama on a Remote Machine
 
@@ -277,7 +300,7 @@ requirements.txt          # Python dependencies
 README.md                 # This file
 tests/
   __init__.py
-  test_orchestrator.py    # Pytest test suite (41 tests)
+  test_orchestrator.py    # Pytest test suite
   fake_junie.py           # Mock Junie script for testing
 logs/                     # Created at runtime; contains runs.log
 ```
@@ -307,3 +330,17 @@ Every request is logged to `logs/runs.log` with:
 - Improved prompt
 - Junie exit code
 - Request duration
+
+## Troubleshooting
+
+### Junie not logged in (service running as the wrong user)
+
+If you get errors like "Junie not logged in" or "authentication failed", the service is probably running as a different user than the one that logged in to Junie. Check with `sudo systemctl status junie-orchestrator` and make sure the `User=` line matches the Linux user that ran `junie login`. Junie stores its login session in the user's home directory.
+
+### Vault path is empty or not found
+
+If Junie returns empty results or complains about a missing vault, your NAS share may not be mounted. Check with `ls /mnt/vault` (or your `VAULT_PATH`). If the directory is empty, run `sudo mount -a` to apply your `/etc/fstab` entries, or mount the share manually.
+
+### Open WebUI times out on long runs
+
+Junie can take several minutes to complete complex tasks. If Open WebUI shows a timeout error, increase the `AIOHTTP_CLIENT_TIMEOUT` setting in Open WebUI to match or exceed your `JUNIE_TIMEOUT` value (default 1800 seconds / 30 minutes). See Open WebUI's documentation for details.

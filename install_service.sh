@@ -5,18 +5,34 @@
 
 set -euo pipefail
 
-# ── Run as root? ──────────────────────────────────────────────────────────────
+# ── Must be run with sudo ─────────────────────────────────────────────────────
 
 if [ "$EUID" -ne 0 ]; then
-    echo "This script must be run with sudo."
+    echo "Error: This script must be run with sudo."
+    echo ""
     echo "  sudo ./install_service.sh"
+    echo ""
+    echo "This is needed so the script can write the systemd service file to"
+    echo "/etc/systemd/system/ and start the service."
     exit 1
 fi
 
 # ── Detect the user who invoked sudo ──────────────────────────────────────────
 
-# SUDO_USER is set by sudo; fall back to the first normal user
-RUN_USER="${SUDO_USER:-$(logname 2>/dev/null || echo "$USER")}"
+# SUDO_USER is set automatically by sudo. If it's missing, the script was
+# probably run as root directly (e.g., SSH'd in as root), which won't work
+# because Junie needs a normal user's home directory for its login session.
+if [ -z "${SUDO_USER:-}" ]; then
+    echo "Error: SUDO_USER is not set. This script must be run with sudo,"
+    echo "not as root directly."
+    echo ""
+    echo "Log in as your normal user and run:"
+    echo ""
+    echo "  sudo ./install_service.sh"
+    exit 1
+fi
+
+RUN_USER="$SUDO_USER"
 RUN_HOME=$(eval echo "~$RUN_USER")
 
 echo "Detected user: $RUN_USER"
