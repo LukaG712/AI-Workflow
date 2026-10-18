@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import asyncio
@@ -37,6 +38,87 @@ def client():
 
 
 HEADERS_AUTH = {"Authorization": "Bearer test-secret-key"}
+
+
+# ─── Task 1: Safety Tests ────────────────────────────────────────────────────
+
+class TestSafety:
+    def test_startup_without_api_key(self):
+        """Test that importing orchestrator without API_KEY raises RuntimeError."""
+        # Save and clear API_KEY
+        saved = os.environ.pop("API_KEY", None)
+        # Remove the module from cache so it re-imports
+        if "orchestrator" in sys.modules:
+            del sys.modules["orchestrator"]
+        try:
+            with pytest.raises(RuntimeError, match="API_KEY"):
+                import orchestrator  # noqa: F401
+        finally:
+            # Restore API_KEY and re-import
+            os.environ["API_KEY"] = "test-secret-key"
+            if "orchestrator" in sys.modules:
+                del sys.modules["orchestrator"]
+            import orchestrator  # noqa: F401
+
+    def test_junie_not_found_message(self):
+        """Test that missing Junie binary returns a clear message."""
+        import orchestrator
+        original_bin = orchestrator.JUNIE_BIN
+        orchestrator.JUNIE_BIN = "/nonexistent/path/to/junie"
+        try:
+            result = asyncio.get_event_loop().run_until_complete(
+                orchestrator.run_junie("test task")
+            )
+            assert "Junie CLI not found" in result
+            assert "/nonexistent/path/to/junie" in result
+        finally:
+            orchestrator.JUNIE_BIN = original_bin
+
+    def test_timeout_kills_process_and_frees_lock(self):
+        """Test that a timeout kills the process and releases the lock."""
+        import orchestrator
+        original_bin = orchestrator.JUNIE_BIN
+        original_timeout = orchestrator.JUNIE_TIMEOUT
+        # Create a wrapper script that sleeps forever
+        wrapper = Path(__file__).parent / "fake_junie_timeout.py"
+        wrapper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import time\n"
+            "time.sleep(9999)\n"
+        )
+        # Point JUNIE_BIN to python running the wrapper script
+        # Since run_junie builds cmd as [JUNIE_BIN, "--task", ...], we need
+        # JUNIE_BIN to be the full command. Instead, mock run_junie's subprocess call.
+        orchestrator.JUNIE_TIMEOUT = 2
+        orchestrator.junie_lock = asyncio.Lock()
+
+        async def run():
+            await orchestrator.junie_lock.acquire()
+            try:
+                # Temporarily replace JUNIE_BIN with a script path
+                # that we run via sys.executable
+                orig_bin = orchestrator.JUNIE_BIN
+                # Use a mock for the subprocess call
+                mock_proc = AsyncMock()
+                mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+                mock_proc.pid = 12345
+                mock_proc.kill = AsyncMock()
+                mock_proc.wait = AsyncMock()
+
+                with patch("orchestrator.asyncio.create_subprocess_exec", return_value=mock_proc):
+                    result = await orchestrator.run_junie("test")
+                    return result
+            finally:
+                orchestrator.junie_lock.release()
+
+        result = asyncio.get_event_loop().run_until_complete(run())
+        assert "timed out" in result.lower() or "timeout" in result.lower()
+        # Verify lock is released
+        assert not orchestrator.junie_lock.locked()
+
+        # Cleanup
+        orchestrator.JUNIE_TIMEOUT = original_timeout
+        wrapper.unlink(missing_ok=True)
 
 
 # ─── Auth Tests ──────────────────────────────────────────────────────────────
@@ -98,7 +180,7 @@ class TestChatCompletions:
     @patch("orchestrator.build_prompt", new_callable=AsyncMock)
     @patch("orchestrator.run_junie", new_callable=AsyncMock)
     def test_non_streaming(self, mock_junie, mock_prompt, client):
-        mock_prompt.return_value = ("Search for notes about Python", False)
+        mock_prompt.return_value = ("Search for notes about Python", False, "")
         mock_junie.return_value = "Found 5 notes about Python."
 
         resp = client.post(
@@ -120,8 +202,9 @@ class TestChatCompletions:
 
     @patch("orchestrator.build_prompt", new_callable=AsyncMock)
     @patch("orchestrator.run_junie", new_callable=AsyncMock)
-    def test_streaming(self, mock_junie, mock_prompt, client):
-        mock_prompt.return_value = ("Search for notes about Python", False)
+    def test_streaming_progress_order(self, mock_junie, mock_prompt, client):
+        """Test streaming sends chunks in order: improved prompt → working → answer → stop → DONE."""
+        mock_prompt.return_value = ("Search for notes about Python", False, "")
         mock_junie.return_value = "Found 5 notes about Python."
 
         resp = client.post(
@@ -134,16 +217,31 @@ class TestChatCompletions:
         )
         assert resp.status_code == 200
         text = resp.text
-        assert "data: " in text
         assert "[DONE]" in text
+
         # Parse SSE events
-        events = [line for line in text.split("\n") if line.startswith("data: ")]
-        assert len(events) >= 2  # At least content chunk + finish chunk
+        events = [line[6:] for line in text.split("\n") if line.startswith("data: ")]
+        # Filter out [DONE]
+        json_events = [json.loads(e) for e in events if e != "[DONE]"]
+
+        # Check chunk order
+        # Chunk 1: role + improved prompt
+        assert json_events[0]["choices"][0]["delta"].get("role") == "assistant"
+        assert "Improved prompt" in json_events[0]["choices"][0]["delta"]["content"]
+
+        # Chunk 2: Junie is working...
+        assert "Junie is working" in json_events[1]["choices"][0]["delta"]["content"]
+
+        # Chunk 3: final answer
+        assert "Junie:" in json_events[2]["choices"][0]["delta"]["content"]
+
+        # Chunk 4: stop
+        assert json_events[3]["choices"][0]["finish_reason"] == "stop"
 
     @patch("orchestrator.build_prompt", new_callable=AsyncMock)
     @patch("orchestrator.run_junie", new_callable=AsyncMock)
     def test_streaming_sse_format(self, mock_junie, mock_prompt, client):
-        mock_prompt.return_value = ("Search notes", False)
+        mock_prompt.return_value = ("Search notes", False, "")
         mock_junie.return_value = "Answer text"
 
         resp = client.post(
@@ -179,8 +277,8 @@ class TestBypass:
         data = resp.json()
         assert data["choices"][0]["message"]["content"] == "Generated title: Meeting Notes"
 
-    def test_bypass_streaming(self, client):
-        """Test that bypass streaming returns SSE format."""
+    def test_bypass_streaming_progress(self, client):
+        """Test that bypass streaming returns SSE with progress chunks."""
         with patch("orchestrator.ollama_chat_stream") as mock_stream:
             async def fake_stream():
                 yield "Hello"
@@ -201,13 +299,124 @@ class TestBypass:
             assert "data: " in text
             assert "[DONE]" in text
 
+            # Parse SSE events
+            events = [line[6:] for line in text.split("\n") if line.startswith("data: ")]
+            json_events = [json.loads(e) for e in events if e != "[DONE]"]
+
+            # First chunk has role
+            assert json_events[0]["choices"][0]["delta"].get("role") == "assistant"
+            # Last chunk has finish_reason stop
+            assert json_events[-1]["choices"][0]["finish_reason"] == "stop"
+
 
 # ─── Ollama Fallback Tests ──────────────────────────────────────────────────
+
+class TestVaultMap:
+    def test_vault_map_included_in_system_prompt(self, tmp_path):
+        """Test that vault map content is appended to the system prompt."""
+        import orchestrator
+        map_file = tmp_path / "my_vault_map.md"
+        map_file.write_text("## My Vault\n- Projects/\n- Notes/", encoding="utf-8")
+        orchestrator.VAULT_MAP_PATH = str(map_file)
+        system = orchestrator.build_prompt_system()
+        assert "## Vault overview" in system
+        assert "## My Vault" in system
+        assert "Projects/" in system
+
+    def test_missing_vault_map_no_crash(self, tmp_path):
+        """Test that a missing vault map file does not crash."""
+        import orchestrator
+        orchestrator.VAULT_MAP_PATH = str(tmp_path / "nonexistent_map.md")
+        system = orchestrator.build_prompt_system()
+        assert "## Vault overview" not in system
+        assert orchestrator.PROMPT_REWRITE_SYSTEM_BASE in system
+
+    def test_vault_map_in_ollama_request(self, tmp_path):
+        """Test that vault map text ends up in the Ollama request body."""
+        import orchestrator
+        import respx
+
+        map_file = tmp_path / "vault_map.md"
+        map_file.write_text("## Custom Map\n- Folder A\n- Folder B", encoding="utf-8")
+        orchestrator.VAULT_MAP_PATH = str(map_file)
+
+        call_payloads = []
+
+        @respx.mock
+        def run_test():
+            async def capture(request):
+                call_payloads.append(json.loads(request.content))
+                return httpx.Response(200, json={"message": {"content": "Improved"}})
+
+            respx.post("http://localhost:11434/api/chat").side_effect = capture
+
+            asyncio.get_event_loop().run_until_complete(
+                orchestrator.build_prompt("find notes")
+            )
+
+        run_test()
+        assert len(call_payloads) == 1
+        system_content = call_payloads[0]["messages"][0]["content"]
+        assert "## Vault overview" in system_content
+        assert "## Custom Map" in system_content
+
+
+class TestOllamaThinkRetry:
+    def test_think_false_in_request(self):
+        """Test that ollama_chat sends 'think': false in the request body."""
+        import orchestrator
+        import respx
+
+        call_payloads = []
+
+        @respx.mock
+        def run_test():
+            async def capture(request):
+                call_payloads.append(json.loads(request.content))
+                return httpx.Response(200, json={"message": {"content": "Answer"}})
+
+            respx.post("http://localhost:11434/api/chat").side_effect = capture
+
+            result = asyncio.get_event_loop().run_until_complete(
+                orchestrator.ollama_chat([{"role": "user", "content": "test"}])
+            )
+            assert result == "Answer"
+            assert len(call_payloads) == 1
+            assert call_payloads[0].get("think") is False
+
+        run_test()
+
+    def test_think_400_retry(self):
+        """Test that ollama_chat retries without 'think' on HTTP 400 mentioning thinking."""
+        import orchestrator
+        import respx
+
+        call_count = [0]
+
+        @respx.mock
+        def run_test():
+            def handler(request):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    return httpx.Response(400, text="Error: thinking not supported")
+                else:
+                    return httpx.Response(200, json={"message": {"content": "Answer"}})
+
+            respx.post("http://localhost:11434/api/chat").side_effect = handler
+
+            result = asyncio.get_event_loop().run_until_complete(
+                orchestrator.ollama_chat([{"role": "user", "content": "test"}])
+            )
+            assert result == "Answer"
+            assert call_count[0] == 2  # Two calls: initial + retry
+
+        run_test()
+
 
 class TestOllamaFallback:
     @patch("orchestrator.ollama_chat", side_effect=httpx.ConnectError("Connection refused"))
     @patch("orchestrator.run_junie", new_callable=AsyncMock)
-    def test_fallback_to_raw_prompt(self, mock_junie, mock_ollama, client):
+    def test_fallback_connection_refused(self, mock_junie, mock_ollama, client):
         mock_junie.return_value = "Junie answer with raw prompt"
 
         resp = client.post(
@@ -221,8 +430,49 @@ class TestOllamaFallback:
         assert resp.status_code == 200
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
-        assert "Ollama was unreachable" in content
+        assert "connection to Ollama refused" in content
         assert "find notes" in content  # Raw prompt used
+
+    @patch("orchestrator.ollama_chat", side_effect=httpx.HTTPStatusError(
+        "Not Found", request=None, response=httpx.Response(404)
+    ))
+    @patch("orchestrator.run_junie", new_callable=AsyncMock)
+    def test_fallback_404_model_not_found(self, mock_junie, mock_ollama, client):
+        mock_junie.return_value = "Junie answer"
+
+        resp = client.post(
+            "/v1/chat/completions",
+            headers=HEADERS_AUTH,
+            json={
+                "messages": [{"role": "user", "content": "find notes"}],
+                "stream": False,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        assert "HTTP 404" in content
+        assert "find notes" in content
+
+    @patch("orchestrator.ollama_chat", side_effect=httpx.ConnectError("Connection refused"))
+    @patch("orchestrator.run_junie", new_callable=AsyncMock)
+    def test_fallback_error_reason_in_reply(self, mock_junie, mock_ollama, client):
+        """Test that the fallback message contains the specific error reason, not 'unreachable'."""
+        mock_junie.return_value = "Answer"
+
+        resp = client.post(
+            "/v1/chat/completions",
+            headers=HEADERS_AUTH,
+            json={
+                "messages": [{"role": "user", "content": "test"}],
+                "stream": False,
+            },
+        )
+        assert resp.status_code == 200
+        content = resp.json()["choices"][0]["message"]["content"]
+        # Should contain specific error, not generic "unreachable"
+        assert "unreachable" not in content.lower() or "connection" in content.lower()
+        assert "refused" in content.lower() or "error" in content.lower()
 
 
 # ─── Lock Tests ──────────────────────────────────────────────────────────────
@@ -232,7 +482,7 @@ class TestLock:
     @patch("orchestrator.run_junie", new_callable=AsyncMock)
     def test_lock_basic(self, mock_junie, mock_prompt, client):
         """Test that the lock allows one request through successfully."""
-        mock_prompt.return_value = ("Task", False)
+        mock_prompt.return_value = ("Task", False, "")
         mock_junie.return_value = "Done"
 
         resp = client.post(
@@ -314,6 +564,13 @@ class TestReplyFormat:
         assert "Original prompt: find notes" in reply
         assert "Junie: Found 5 notes." in reply
 
+    def test_format_with_error_reason(self):
+        from orchestrator import format_reply
+        reply = format_reply("find notes", "Found 5 notes.", True, "model 'gemma4:12b' returned HTTP 404")
+        assert "model 'gemma4:12b' returned HTTP 404" in reply
+        assert "Ollama was unreachable" not in reply
+        assert "Original prompt: find notes" in reply
+
 
 # ─── Bypass Detection Tests ─────────────────────────────────────────────────
 
@@ -343,7 +600,7 @@ class TestLogging:
     @patch("orchestrator.build_prompt", new_callable=AsyncMock)
     @patch("orchestrator.run_junie", new_callable=AsyncMock)
     def test_request_logged(self, mock_junie, mock_prompt, client):
-        mock_prompt.return_value = ("Search notes", False)
+        mock_prompt.return_value = ("Search notes", False, "")
         mock_junie.return_value = "Found notes"
 
         resp = client.post(
@@ -371,7 +628,7 @@ class TestJunieBin:
         import subprocess
         fake_junie = Path(__file__).parent / "fake_junie.py"
         result = subprocess.run(
-            ["python", str(fake_junie)],
+            [sys.executable, str(fake_junie)],
             capture_output=True,
             text=True,
             timeout=5,

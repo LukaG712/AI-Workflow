@@ -19,7 +19,7 @@ The improved prompt runs immediately with no approval step.
 
 - Python 3.11+
 - [Junie CLI](https://github.com/junie-ai/junie) installed and in your PATH
-- [Ollama](https://ollama.ai/) running locally with a model pulled (default: `qwen2.5:14b`)
+- [Ollama](https://ollama.ai/) running locally with a model pulled (default: `gemma4:12b`)
 
 ### Setup
 
@@ -40,12 +40,15 @@ cp .env.example .env
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
-| `OLLAMA_MODEL` | `qwen2.5:14b` | Model for prompt improvement |
+| `OLLAMA_MODEL` | `gemma4:12b` | Model for prompt improvement |
 | `VAULT_PATH` | `/mnt/vault` | Path to your Obsidian vault |
+| `VAULT_MAP_PATH` | `vault_map.md` | Path to optional vault map file |
 | `API_KEY` | *(required)* | Shared secret for Bearer token auth |
 | `JUNIE_TIMEOUT` | `1800` | Timeout in seconds for Junie runs |
 | `PORT` | `8000` | Port for uvicorn |
 | `JUNIE_BIN` | *(none)* | Override Junie binary path (for testing) |
+
+**Important:** The service refuses to start if `API_KEY` is unset or empty.
 
 ## Running
 
@@ -67,6 +70,7 @@ After=network.target
 [Service]
 Type=simple
 User=your-user
+Home=/home/your-user
 WorkingDirectory=/path/to/orchestrator
 Environment=API_KEY=your-secret-key-here
 Environment=VAULT_PATH=/mnt/vault
@@ -78,6 +82,8 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+**Important:** The service must run as the **same Linux user** that logged in to Junie, with `HOME` set correctly. Junie needs access to its saved login session, which lives in the user's home directory. Replace `your-user` with your actual username.
 
 Then enable and start:
 
@@ -107,6 +113,16 @@ Open WebUI sends background requests (chat title and tag generation) that should
 3. This ensures background tasks don't consume Junie resources
 
 The orchestrator also detects `### Task:` prefixed messages and forwards them directly to Ollama, providing an extra layer of protection.
+
+### Open WebUI Timeout
+
+Long Junie runs may exceed Open WebUI's client-side timeout. Check Open WebUI's documentation for the `AIOHTTP_CLIENT_TIMEOUT` setting (or equivalent) and increase it to match or exceed your `JUNIE_TIMEOUT` value. The default is 1800 seconds (30 minutes).
+
+## Vault Map (Optional)
+
+Create a `vault_map.md` file next to `orchestrator.py` (or set `VAULT_MAP_PATH` to point to it) to help the prompt builder understand your vault structure. See `vault_map.example.md` for a template.
+
+When present, the vault map is appended to the prompt improvement system prompt under the heading "Vault overview", giving the AI context about your folder structure and note types.
 
 ## API Endpoints
 
@@ -165,7 +181,11 @@ Process a chat completion request through the orchestrator pipeline.
 }
 ```
 
-**Response (streaming):** Server-Sent Events (SSE) format with `data:` prefixed JSON chunks, ending with `data: [DONE]`.
+**Response (streaming):** Server-Sent Events (SSE) with progress chunks:
+1. First chunk: the improved prompt
+2. Second chunk: "Junie is working..."
+3. Third chunk: the final answer
+4. Final chunk: `finish_reason: "stop"` followed by `data: [DONE]`
 
 ## Manual Steps
 
@@ -179,7 +199,7 @@ Before running the orchestrator, you need to:
 
 2. **Install Ollama models**:
    ```bash
-   ollama pull qwen2.5:14b
+   ollama pull gemma4:12b
    ```
    Or whichever model you've configured in `OLLAMA_MODEL`.
 
@@ -192,6 +212,23 @@ Before running the orchestrator, you need to:
 4. **Install Junie CLI** and ensure it's in your PATH:
    ```bash
    junie --version
+   ```
+
+5. **Use a scratch copy of the vault** for your first runs. Point `VAULT_PATH` to a copy of your vault so you can verify the orchestrator's behavior before running against your real vault.
+
+### Ollama on a Remote Machine
+
+If Ollama runs on a different machine than the orchestrator:
+
+1. Set `OLLAMA_URL` to the Ollama machine's address, e.g., `http://192.168.1.100:11434`.
+2. On the Ollama machine, make Ollama listen on the network:
+   ```bash
+   OLLAMA_HOST=0.0.0.0 ollama serve
+   ```
+   Or set `OLLAMA_HOST=0.0.0.0` in your Ollama service configuration.
+3. Allow Ollama's port (default 11434) in the firewall for your home network only:
+   ```bash
+   sudo ufw allow from 192.168.1.0/24 to any port 11434
    ```
 
 ## Testing
@@ -209,11 +246,12 @@ The tests use `tests/fake_junie.py` as a mock Junie binary and mock Ollama calls
 ```
 orchestrator.py        # Main FastAPI app (all routes, services, utilities)
 .env.example           # Environment variable template
+vault_map.example.md   # Example vault map file
 requirements.txt       # Python dependencies
 README.md              # This file
 tests/
   __init__.py
-  test_orchestrator.py # Pytest test suite (30 tests)
+  test_orchestrator.py # Pytest test suite (41 tests)
   fake_junie.py        # Mock Junie script for testing
 logs/                  # Created at runtime; contains runs.log
 ```
@@ -225,7 +263,7 @@ The orchestrator returns markdown with two parts:
 1. **Improved prompt** — shown as a blockquote (`> Improved prompt: ...`)
 2. **Junie's answer** — shown as `Junie: ...`
 
-If Ollama is unreachable, the reply notes the fallback: `> **Note:** Ollama was unreachable. Using original prompt.`
+If Ollama fails, the reply states the specific reason (e.g., `model 'gemma4:12b' returned HTTP 404` or `connection to Ollama refused`).
 
 ## Rate Limiting
 

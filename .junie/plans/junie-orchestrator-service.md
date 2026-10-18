@@ -178,14 +178,31 @@ Build the FastAPI app skeleton with authentication, `/v1/models`, and `/v1/chat/
 ### ✓ Step 4: Phase 4: Reply formatting and logging
 
 ### ✓ Step 5: Phase 5: Complete test suite and README
-Finalize the test suite and write a comprehensive README with setup, run instructions, systemd unit, and Open WebUI configuration.
-- Ensure all tests pass: auth, models, streaming, non-streaming, bypass, Ollama fallback, lock, retries, reply format, logging
-- Write `README.md` with:
-  - Installation instructions (`pip install -r requirements.txt`)
-  - Run command: `uvicorn orchestrator:app --host 0.0.0.0 --port 8000`
-  - systemd unit example
-  - Open WebUI setup: Admin Settings → Connections → OpenAI API, base URL `http://<vm-ip>:8000/v1`, API key
-  - Reminder to set Open WebUI's task model to a different model in Admin Settings → Interface
-  - Manual steps section: mounting NAS at VAULT_PATH, installing Ollama models, opening firewall
-  - Environment variable reference table
-- Verify `uvicorn orchestrator:app` starts and responds to `/v1/models` with correct auth
+
+### ✓ Step 6: Task 1: Safety improvements
+- (a) Refuse startup if API_KEY is unset or empty
+- (b) Build Junie command as list (no shell=True), start subprocess in own process group, kill process group on timeout, ensure lock release after process is dead
+- (c) Tests: startup without API_KEY fails; timeout kills process and frees lock
+
+### ✓ Step 7: Task 2: Ollama model and error reporting
+- (a) Change default OLLAMA_MODEL from qwen2.5:14b to gemma4:12b
+- (b) Specific error messages in fallback (status code, model name, connection error type)
+- (c) Add "think": false with 400 retry
+- (d) Tests for error messages and 400 retry
+
+### ✓ Step 8: Task 3: Vault map and better rewrite rules
+- (a) Read optional vault_map.md file, append to system prompt
+- (b) Add new rewrite rules to system prompt
+- (c) Tests for vault map
+
+### ✓ Step 9: Task 4: Streaming progress
+- Send improved prompt as first SSE chunk, then "Junie is working...", then final answer, then stop, then [DONE]
+- Apply same structure to ### Task: bypass path
+- Update streaming tests
+
+### ✓ Step 10: Task 5: Portability and tests
+- (a) Cross-platform test compatibility
+- (b) Clear message if Junie binary not found
+
+### ✓ Step 11: Task 6: README updates
+- Document new env vars, Ollama network config, systemd HOME setting, scratch vault advice, Open WebUI timeout
