@@ -13,7 +13,32 @@ Open WebUI → orchestrator (OpenAI-compatible API)
 
 The improved prompt runs immediately with no approval step.
 
-## Installation
+## Quick Start
+
+Get up and running in three steps:
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/your-user/AI-Workflow.git
+cd AI-Workflow
+
+# 2. Run the setup script (installs dependencies, configures .env, pulls the model)
+./setup.sh
+
+# 3. Start the server
+./start.sh
+```
+
+Then in Open WebUI, add a new **OpenAI API** connection with:
+
+- **Base URL**: `http://<this-machine-ip>:8000/v1`
+- **API Key**: The key printed by `setup.sh`
+
+That's it — you're ready to chat.
+
+## Manual Setup (Advanced)
+
+If you prefer to set things up by hand, or need to troubleshoot, follow the steps below.
 
 ### Prerequisites
 
@@ -27,7 +52,9 @@ The improved prompt runs immediately with no approval step.
 # Clone or copy the project
 cd /path/to/orchestrator
 
-# Install dependencies
+# Create a virtual environment and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
 # Configure environment variables
@@ -50,17 +77,26 @@ cp .env.example .env
 
 **Important:** The service refuses to start if `API_KEY` is unset or empty.
 
-## Running
+### Running
 
-### Development
+#### Development
 
 ```bash
+source .venv/bin/activate
 uvicorn orchestrator:app --host 0.0.0.0 --port 8000
 ```
 
-### Production (systemd)
+Or simply run `./start.sh`.
 
-Create `/etc/systemd/system/junie-orchestrator.service`:
+#### Production (systemd)
+
+The easiest way is to run the included script, which fills in your user and paths automatically:
+
+```bash
+sudo ./install_service.sh
+```
+
+Or create `/etc/systemd/system/junie-orchestrator.service` manually:
 
 ```ini
 [Unit]
@@ -70,12 +106,10 @@ After=network.target
 [Service]
 Type=simple
 User=your-user
-Home=/home/your-user
+Environment=HOME=/home/your-user
 WorkingDirectory=/path/to/orchestrator
-Environment=API_KEY=your-secret-key-here
-Environment=VAULT_PATH=/mnt/vault
-Environment=OLLAMA_URL=http://localhost:11434
-ExecStart=/path/to/venv/bin/uvicorn orchestrator:app --host 0.0.0.0 --port 8000
+EnvironmentFile=/path/to/orchestrator/.env
+ExecStart=/path/to/orchestrator/.venv/bin/uvicorn orchestrator:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
 
@@ -187,9 +221,9 @@ Process a chat completion request through the orchestrator pipeline.
 3. Third chunk: the final answer
 4. Final chunk: `finish_reason: "stop"` followed by `data: [DONE]`
 
-## Manual Steps
+## Additional Setup (Advanced)
 
-Before running the orchestrator, you need to:
+Before running the orchestrator, you may need to:
 
 1. **Mount your NAS share** at `VAULT_PATH` (default `/mnt/vault`):
    ```bash
@@ -197,24 +231,13 @@ Before running the orchestrator, you need to:
    ```
    Or use an `/etc/fstab` entry for persistent mounting.
 
-2. **Install Ollama models**:
-   ```bash
-   ollama pull gemma4:12b
-   ```
-   Or whichever model you've configured in `OLLAMA_MODEL`.
-
-3. **Open the firewall** for the orchestrator port:
+2. **Open the firewall** for the orchestrator port:
    ```bash
    sudo ufw allow 8000/tcp
    ```
    Or configure your cloud/VM firewall rules accordingly.
 
-4. **Install Junie CLI** and ensure it's in your PATH:
-   ```bash
-   junie --version
-   ```
-
-5. **Use a scratch copy of the vault** for your first runs. Point `VAULT_PATH` to a copy of your vault so you can verify the orchestrator's behavior before running against your real vault.
+3. **Use a scratch copy of the vault** for your first runs. Point `VAULT_PATH` to a copy of your vault so you can verify the orchestrator's behavior before running against your real vault.
 
 ### Ollama on a Remote Machine
 
@@ -244,16 +267,19 @@ The tests use `tests/fake_junie.py` as a mock Junie binary and mock Ollama calls
 ## Project Structure
 
 ```
-orchestrator.py        # Main FastAPI app (all routes, services, utilities)
-.env.example           # Environment variable template
-vault_map.example.md   # Example vault map file
-requirements.txt       # Python dependencies
-README.md              # This file
+orchestrator.py           # Main FastAPI app (all routes, services, utilities)
+.env.example              # Environment variable template
+setup.sh                  # One-time setup script (prerequisites, venv, .env, API key)
+start.sh                  # Start the server (activates venv, runs uvicorn)
+install_service.sh        # Install as a systemd background service
+vault_map.example.md      # Example vault map file
+requirements.txt          # Python dependencies
+README.md                 # This file
 tests/
   __init__.py
-  test_orchestrator.py # Pytest test suite (41 tests)
-  fake_junie.py        # Mock Junie script for testing
-logs/                  # Created at runtime; contains runs.log
+  test_orchestrator.py    # Pytest test suite (41 tests)
+  fake_junie.py           # Mock Junie script for testing
+logs/                     # Created at runtime; contains runs.log
 ```
 
 ## Reply Format
