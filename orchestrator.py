@@ -23,11 +23,28 @@ load_dotenv()
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:12b")
 VAULT_PATH = os.getenv("VAULT_PATH", "/mnt/vault")
+WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", str(Path.home() / "workspace"))
+MIRROR_LOGS_TO_VAULT = os.getenv("MIRROR_LOGS_TO_VAULT", "false").lower() == "true"
 API_KEY = os.getenv("API_KEY", "")
 JUNIE_TIMEOUT = int(os.getenv("JUNIE_TIMEOUT", "1800"))
 PORT = int(os.getenv("PORT", "8000"))
 JUNIE_BIN = os.getenv("JUNIE_BIN", "junie")
 VAULT_MAP_PATH = os.getenv("VAULT_MAP_PATH", str(Path(__file__).parent / "vault_map.md"))
+
+# ─── Workspace & Memory ──────────────────────────────────────────────────────
+
+# Ensure workspace directory exists; fall back to VAULT_PATH if WORKSPACE_PATH unset
+_workspace_env = os.getenv("WORKSPACE_PATH")
+if _workspace_env is None:
+    # Unset → fall back to old behavior
+    WORKSPACE_PATH = VAULT_PATH
+    runs_logger.warning("WORKSPACE_PATH not set — falling back to VAULT_PATH for project work.")
+else:
+    Path(WORKSPACE_PATH).mkdir(parents=True, exist_ok=True)
+
+MEMORY_FILE = Path(WORKSPACE_PATH) / "MEMORY.md"
+SESSION_LOGS_DIR = Path(WORKSPACE_PATH) / "session-logs"
+SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── Startup validation ──────────────────────────────────────────────────────
 
@@ -67,10 +84,11 @@ async def require_auth(request: Request):
 
 # ─── Ollama helpers ──────────────────────────────────────────────────────────
 
-PROMPT_REWRITE_SYSTEM_BASE = """You rewrite rough requests into one precise task for an AI agent that works inside an Obsidian vault of markdown files. Keep my intent exactly.
+PROMPT_REWRITE_SYSTEM_BASE = """You rewrite rough requests into one precise task for an AI agent. The agent works in a workspace directory for project work, remembers context via MEMORY.md and session logs, and uses a vault for searchable notes. Keep my intent exactly.
 
 Follow these rules:
 
+- The workspace (WORKSPACE_PATH) is where the agent does project work. The vault (VAULT_PATH) contains the user's Obsidian notes and knowledge — read it for background when relevant.
 - Before creating a new note, the agent must first search the vault for existing notes on the topic and extend them instead of creating duplicates.
 - If the request is ambiguous (for example which project is meant), the agent must state its assumption in its answer instead of guessing silently.
 - If the request is a question, the task must be read-only: answer in the chat and do not create or edit any files.
@@ -80,15 +98,22 @@ Format the rewritten task with each of the following in its own paragraph, separ
 
 Goal: What the task aims to achieve.
 Scope: Which folders or notes are in scope.
-Constraints: Never delete files; write new files in the _ai/ folder unless told otherwise; do not edit notes outside the scope.
+Constraints: Never delete files; write new files in the workspace unless told otherwise; do not edit notes outside the scope.
 Expected Output: The format of the deliverable.
 
 Return ONLY the rewritten task, no commentary."""
 
 
 def build_prompt_system() -> str:
-    """Build the full promptbuilder system prompt, optionally including vault map."""
+    """Build the full promptbuilder system prompt, optionally including vault map and memory context."""
     system = PROMPT_REWRITE_SYSTEM_BASE
+
+    # Include memory context (MEMORY.md + recent session logs)
+    memory_ctx = load_memory_context()
+    if memory_ctx:
+        system += "\n\n## Context from previous work\n\n" + memory_ctx
+
+    # Include vault map
     vault_map = Path(VAULT_MAP_PATH)
     if vault_map.exists():
         try:
@@ -158,6 +183,110 @@ async def ollama_chat_stream(messages: list, model: Optional[str] = None):
                         yield content
                 except json.JSONDecodeError:
                     continue
+
+
+# ─── Memory helpers ──────────────────────────────────────────────────────────
+
+def load_memory_context() -> str:
+    """Load MEMORY.md and the 3 most recent session summaries for context.
+    Returns a formatted string to prepend to the prompt system, or empty string."""
+    parts: list[str] = []
+
+    # Load permanent memory file
+    if MEMORY_FILE.exists():
+        try:
+            content = MEMORY_FILE.read_text(encoding="utf-8").strip()
+            if content:
+                parts.append("## Project Memory\n\n" + content)
+        except Exception as e:
+            runs_logger.warning(f"Failed to read MEMORY.md: {e}")
+
+    # Load 3 most recent session logs
+    if SESSION_LOGS_DIR.exists():
+        try:
+            # Sort by modification time, newest first
+            log_files = sorted(
+                SESSION_LOGS_DIR.glob("session-*.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )[:3]
+            if log_files:
+                session_summaries: list[str] = []
+                for lf in log_files:
+                    try:
+                        summary = lf.read_text(encoding="utf-8").strip()
+                        if summary:
+                            session_summaries.append(summary)
+                    except Exception as e:
+                        runs_logger.warning(f"Failed to read session log {lf.name}: {e}")
+                if session_summaries:
+                    parts.append("## Recent Session Summaries\n\n" + "\n---\n\n".join(session_summaries))
+        except Exception as e:
+            runs_logger.warning(f"Failed to list session logs: {e}")
+
+    if parts:
+        return "\n\n".join(parts)
+    return ""
+
+
+async def save_session_log(raw_prompt: str, improved_prompt: str, junie_answer: str, fallback: bool) -> None:
+    """Generate a short session summary via Ollama and save it to session-logs/.
+    If Ollama is unavailable, fall back to a simple template summary.
+    If saving fails, log the error but do not raise."""
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_file = SESSION_LOGS_DIR / f"session-{timestamp}.md"
+
+    # Build a fallback summary (used if Ollama fails)
+    fallback_summary = (
+        f"# Session {timestamp}\n\n"
+        f"**Raw prompt:** {raw_prompt}\n\n"
+        f"**Improved prompt:** {improved_prompt}\n\n"
+        f"**Fallback:** {fallback}\n\n"
+        f"**Answer:** {junie_answer[:500]}\n"
+    )
+
+    # Try to get a better summary from Ollama
+    try:
+        summary_prompt = (
+            "Write a concise session summary (3-5 sentences) with: what was asked, "
+            "what was done, key decisions, and any pending tasks. "
+            "Format as markdown with a # Session header.\n\n"
+            f"Raw prompt: {raw_prompt}\n\n"
+            f"Improved prompt: {improved_prompt}\n\n"
+            f"Answer: {junie_answer[:1000]}"
+        )
+        system = "You are a technical assistant that writes concise session summaries."
+        summary = await ollama_chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": summary_prompt}],
+            try_think=False,
+        )
+        if summary.strip():
+            fallback_summary = summary.strip()
+    except Exception as e:
+        runs_logger.warning(f"Ollama summary generation failed: {e}. Using fallback summary.")
+
+    # Save the summary
+    try:
+        log_file.write_text(fallback_summary, encoding="utf-8")
+        runs_logger.info(f"Session log saved: {log_file.name}")
+    except Exception as e:
+        runs_logger.error(f"Failed to save session log: {e}")
+
+    # Mirror to vault if enabled
+    if MIRROR_LOGS_TO_VAULT:
+        _mirror_log_to_vault(log_file)
+
+
+def _mirror_log_to_vault(log_file: Path) -> None:
+    """Copy a session log to VAULT_PATH/Session-Logs/ for Obsidian visibility."""
+    try:
+        vault_logs_dir = Path(VAULT_PATH) / "Session-Logs"
+        vault_logs_dir.mkdir(parents=True, exist_ok=True)
+        dest = vault_logs_dir / log_file.name
+        dest.write_text(log_file.read_text(encoding="utf-8"), encoding="utf-8")
+        runs_logger.info(f"Session log mirrored to vault: {dest.name}")
+    except Exception as e:
+        runs_logger.warning(f"Failed to mirror session log to vault: {e}")
 
 
 # ─── Prompt builder ──────────────────────────────────────────────────────────
@@ -244,19 +373,20 @@ async def run_junie(task: str) -> str:
     """Run Junie CLI as a subprocess. Returns the answer text."""
     # Support JUNIE_BIN pointing to a Python script (e.g., tests/fake_junie.py)
     # In that case, run: python <script> --task ... --project ... --output-format json
+    # Use WORKSPACE_PATH as the project directory for Junie
     junie_path = Path(JUNIE_BIN)
     if junie_path.suffix == ".py":
         cmd = [
             sys.executable, str(junie_path),
             "--task", task,
-            "--project", VAULT_PATH,
+            "--project", WORKSPACE_PATH,
             "--output-format", "json",
         ]
     else:
         cmd = [
             JUNIE_BIN,
             "--task", task,
-            "--project", VAULT_PATH,
+            "--project", WORKSPACE_PATH,
             "--output-format", "json",
         ]
 
@@ -538,6 +668,9 @@ async def chat_completions(request: Request):
         f"Request completed in {duration:.1f}s | Raw: {raw_prompt[:80]}... | "
         f"Improved: {improved_prompt[:80]}... | Fallback: {fallback}"
     )
+
+    # Step 2b: Save session log (if it fails, we still return the answer)
+    await save_session_log(raw_prompt, improved_prompt, junie_answer, fallback)
 
     # Step 3: Return response
     if stream:

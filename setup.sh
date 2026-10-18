@@ -113,12 +113,27 @@ else
     info "API_KEY is already set in .env."
 fi
 
-# ── 6. Ask for VAULT_PATH ────────────────────────────────────────────────────
+# ── 6. Ask for WORKSPACE_PATH ────────────────────────────────────────────────
+
+current_workspace=$(grep -E '^WORKSPACE_PATH=' .env | head -1 | cut -d'=' -f2-)
+default_workspace="${current_workspace:-~/workspace}"
+
+read -rp "  Workspace path (project work, memory, session logs) [$default_workspace]: " user_workspace
+user_workspace="${user_workspace:-$default_workspace}"
+
+if grep -qE '^WORKSPACE_PATH=' .env; then
+    sed -i "s|^WORKSPACE_PATH=.*|WORKSPACE_PATH=$user_workspace|" .env
+else
+    echo "WORKSPACE_PATH=$user_workspace" >> .env
+fi
+info "WORKSPACE_PATH set to: $user_workspace"
+
+# ── 7. Ask for VAULT_PATH ────────────────────────────────────────────────────
 
 current_vault=$(grep -E '^VAULT_PATH=' .env | head -1 | cut -d'=' -f2-)
 default_vault="${current_vault:-/mnt/vault}"
 
-read -rp "  Obsidian vault path [$default_vault]: " user_vault
+read -rp "  Obsidian vault path (searchable notes) [$default_vault]: " user_vault
 user_vault="${user_vault:-$default_vault}"
 
 if grep -qE '^VAULT_PATH=' .env; then
@@ -128,7 +143,7 @@ else
 fi
 info "VAULT_PATH set to: $user_vault"
 
-# ── 7. Ask for OLLAMA_MODEL ──────────────────────────────────────────────────
+# ── 8. Ask for OLLAMA_MODEL ──────────────────────────────────────────────────
 
 current_model=$(grep -E '^OLLAMA_MODEL=' .env | head -1 | cut -d'=' -f2-)
 default_model="${current_model:-gemma4:12b}"
@@ -143,7 +158,7 @@ else
 fi
 info "OLLAMA_MODEL set to: $user_model"
 
-# ── 8. Check if the model is pulled, offer to pull it ────────────────────────
+# ── 9. Check if the model is pulled, offer to pull it ────────────────────────
 
 # List pulled models and check if ours is there
 pulled_models=$(ollama list 2>/dev/null || true)
@@ -161,7 +176,7 @@ else
     fi
 fi
 
-# ── 9. Summary ────────────────────────────────────────────────────────────────
+# ── 10. Summary ────────────────────────────────────────────────────────────────
 
 echo ""
 echo "=========================================="

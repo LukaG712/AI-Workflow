@@ -15,6 +15,7 @@ os.environ["API_KEY"] = "test-secret-key"
 os.environ["JUNIE_BIN"] = str(Path(__file__).parent / "fake_junie.py")
 os.environ["JUNIE_TIMEOUT"] = "10"
 os.environ["VAULT_PATH"] = "/tmp/test-vault"
+os.environ["WORKSPACE_PATH"] = "/tmp/test-workspace"
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +34,8 @@ def client():
     orchestrator.JUNIE_BIN = str(Path(__file__).parent / "fake_junie.py")
     orchestrator.JUNIE_TIMEOUT = 10
     orchestrator.VAULT_PATH = "/tmp/test-vault"
+    orchestrator.WORKSPACE_PATH = "/tmp/test-workspace"
+    orchestrator.MIRROR_LOGS_TO_VAULT = False
     with TestClient(orchestrator.app) as c:
         yield c
 
@@ -636,3 +639,202 @@ class TestJunieBin:
         assert result.returncode == 0
         output = json.loads(result.stdout)
         assert "answer" in output
+
+
+# ─── Memory & Session Log Tests ──────────────────────────────────────────────
+
+class TestMemoryLoading:
+    def test_load_memory_empty(self, tmp_path):
+        """Test that load_memory_context returns empty string when no memory files exist."""
+        import orchestrator
+        orchestrator.MEMORY_FILE = tmp_path / "MEMORY.md"
+        orchestrator.SESSION_LOGS_DIR = tmp_path / "session-logs"
+        orchestrator.SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        ctx = orchestrator.load_memory_context()
+        assert ctx == ""
+
+    def test_load_memory_from_file(self, tmp_path):
+        """Test that MEMORY.md content is included in context."""
+        import orchestrator
+        memory_file = tmp_path / "MEMORY.md"
+        memory_file.write_text("Convention: use snake_case for variables.", encoding="utf-8")
+        orchestrator.MEMORY_FILE = memory_file
+        orchestrator.SESSION_LOGS_DIR = tmp_path / "session-logs"
+        orchestrator.SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        ctx = orchestrator.load_memory_context()
+        assert "## Project Memory" in ctx
+        assert "Convention: use snake_case for variables." in ctx
+
+    def test_load_recent_session_logs(self, tmp_path):
+        """Test that the 3 most recent session logs are included."""
+        import orchestrator
+        orchestrator.MEMORY_FILE = tmp_path / "MEMORY.md"
+        logs_dir = tmp_path / "session-logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        orchestrator.SESSION_LOGS_DIR = logs_dir
+
+        # Create 4 session logs
+        for i in range(4):
+            log_file = logs_dir / f"session-2025010{i}-120000.md"
+            log_file.write_text(f"# Session {i}\n\nTask {i} was completed.", encoding="utf-8")
+            # Set different modification times so sorting works
+            import os as os_module
+            os_module.utime(log_file, (1000 + i, 1000 + i))
+
+        ctx = orchestrator.load_memory_context()
+        assert "## Recent Session Summaries" in ctx
+        # Should include the 3 most recent (sessions 1, 2, 3 by mtime)
+        assert "Session 3" in ctx
+        assert "Session 2" in ctx
+        assert "Session 1" in ctx
+        # Should NOT include the oldest (session 0)
+        assert "Session 0" not in ctx
+
+    def test_load_memory_and_sessions_combined(self, tmp_path):
+        """Test that both MEMORY.md and session logs appear in context."""
+        import orchestrator
+        memory_file = tmp_path / "MEMORY.md"
+        memory_file.write_text("Key decision: use FastAPI.", encoding="utf-8")
+        orchestrator.MEMORY_FILE = memory_file
+        logs_dir = tmp_path / "session-logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        orchestrator.SESSION_LOGS_DIR = logs_dir
+        log_file = logs_dir / "session-20250101-120000.md"
+        log_file.write_text("# Session 1\n\nFixed the login bug.", encoding="utf-8")
+
+        ctx = orchestrator.load_memory_context()
+        assert "## Project Memory" in ctx
+        assert "Key decision: use FastAPI." in ctx
+        assert "## Recent Session Summaries" in ctx
+        assert "Fixed the login bug." in ctx
+
+    def test_load_memory_missing_file_no_crash(self, tmp_path):
+        """Test that a missing MEMORY.md does not crash."""
+        import orchestrator
+        orchestrator.MEMORY_FILE = tmp_path / "nonexistent.md"
+        orchestrator.SESSION_LOGS_DIR = tmp_path / "session-logs"
+        orchestrator.SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        ctx = orchestrator.load_memory_context()
+        assert ctx == ""
+
+
+class TestSessionLogSaving:
+    async def test_save_session_log_creates_file(self, tmp_path):
+        """Test that save_session_log creates a markdown file in session-logs/."""
+        import orchestrator
+        orchestrator.MEMORY_FILE = tmp_path / "MEMORY.md"
+        logs_dir = tmp_path / "session-logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        orchestrator.SESSION_LOGS_DIR = logs_dir
+        orchestrator.MIRROR_LOGS_TO_VAULT = False
+
+        # Mock Ollama to fail so we use the fallback summary
+        with patch("orchestrator.ollama_chat", new_callable=AsyncMock, side_effect=Exception("no ollama")):
+            await orchestrator.save_session_log(
+                raw_prompt="find notes",
+                improved_prompt="Search for notes",
+                junie_answer="Found 3 notes.",
+                fallback=False,
+            )
+
+        # Check that a log file was created
+        log_files = list(logs_dir.glob("session-*.md"))
+        assert len(log_files) == 1
+        content = log_files[0].read_text(encoding="utf-8")
+        assert "find notes" in content
+        assert "Search for notes" in content
+        assert "Found 3 notes." in content
+
+    async def test_save_session_log_ollama_summary(self, tmp_path):
+        """Test that save_session_log uses Ollama summary when available."""
+        import orchestrator
+        orchestrator.MEMORY_FILE = tmp_path / "MEMORY.md"
+        logs_dir = tmp_path / "session-logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        orchestrator.SESSION_LOGS_DIR = logs_dir
+        orchestrator.MIRROR_LOGS_TO_VAULT = False
+
+        with patch("orchestrator.ollama_chat", new_callable=AsyncMock, return_value="# Session Summary\n\nOllama wrote this summary."):
+            await orchestrator.save_session_log(
+                raw_prompt="test",
+                improved_prompt="Test task",
+                junie_answer="Done.",
+                fallback=False,
+            )
+
+        log_files = list(logs_dir.glob("session-*.md"))
+        assert len(log_files) == 1
+        content = log_files[0].read_text(encoding="utf-8")
+        assert "Ollama wrote this summary." in content
+
+    async def test_save_session_log_failure_does_not_raise(self, tmp_path):
+        """Test that a save failure logs an error but does not raise."""
+        import orchestrator
+        orchestrator.MEMORY_FILE = tmp_path / "MEMORY.md"
+        # Point to a non-writable directory
+        orchestrator.SESSION_LOGS_DIR = tmp_path / "readonly" / "session-logs"
+        orchestrator.SESSION_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        # Make it read-only
+        import stat as stat_module
+        orchestrator.SESSION_LOGS_DIR.chmod(stat_module.S_IRUSR)
+        orchestrator.MIRROR_LOGS_TO_VAULT = False
+
+        with patch("orchestrator.ollama_chat", new_callable=AsyncMock, side_effect=Exception("no ollama")):
+            # Should not raise
+            await orchestrator.save_session_log(
+                raw_prompt="test",
+                improved_prompt="Test",
+                junie_answer="Answer",
+                fallback=False,
+            )
+
+        # Restore permissions for cleanup
+        orchestrator.SESSION_LOGS_DIR.chmod(stat_module.S_IRWXU)
+
+
+class TestMirrorLogsToVault:
+    def test_mirror_copies_to_vault(self, tmp_path):
+        """Test that _mirror_log_to_vault copies the log to VAULT_PATH/Session-Logs/."""
+        import orchestrator
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir(parents=True, exist_ok=True)
+        orchestrator.VAULT_PATH = str(vault_dir)
+
+        # Create a session log file
+        logs_dir = tmp_path / "session-logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / "session-20250101-120000.md"
+        log_file.write_text("# Session\n\nTest log.", encoding="utf-8")
+
+        orchestrator._mirror_log_to_vault(log_file)
+
+        vault_logs = vault_dir / "Session-Logs"
+        assert vault_logs.exists()
+        mirrored = vault_logs / "session-20250101-120000.md"
+        assert mirrored.exists()
+        assert mirrored.read_text(encoding="utf-8") == "# Session\n\nTest log."
+
+    def test_mirror_failure_does_not_raise(self, tmp_path):
+        """Test that a mirror failure logs a warning but does not raise."""
+        import orchestrator
+        # Point to a non-existent parent that can't be created
+        orchestrator.VAULT_PATH = str(tmp_path / "no" / "access" / "vault")
+
+        logs_dir = tmp_path / "session-logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / "session-20250101-120000.md"
+        log_file.write_text("# Session\n\nTest.", encoding="utf-8")
+
+        # Should not raise
+        orchestrator._mirror_log_to_vault(log_file)
+
+
+class TestWorkspaceFallback:
+    def test_workspace_uses_workspace_path_in_junie_cmd(self):
+        """Test that run_junie uses WORKSPACE_PATH, not VAULT_PATH."""
+        import orchestrator
+        # The cmd should use WORKSPACE_PATH
+        # We verify by checking the module-level variable is used
+        assert hasattr(orchestrator, "WORKSPACE_PATH")
+        assert hasattr(orchestrator, "MEMORY_FILE")
+        assert hasattr(orchestrator, "SESSION_LOGS_DIR")

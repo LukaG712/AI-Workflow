@@ -6,12 +6,13 @@ A Python FastAPI service that connects [Open WebUI](https://github.com/open-webu
 
 ```
 Open WebUI → orchestrator (OpenAI-compatible API)
-  → 1) Prompt builder: local Ollama model rewrites the prompt
-  → 2) Junie CLI runs headless on your Obsidian vault with the improved prompt
+  → 1) Prompt builder: loads MEMORY.md + recent session logs, then local Ollama model rewrites the prompt
+  → 2) Junie CLI runs headless in the workspace with the improved prompt
   → 3) Junie's answer returns to Open WebUI as a chat reply
+  → 4) Session log saved to workspace/session-logs/ (optionally mirrored to vault)
 ```
 
-The improved prompt runs immediately with no approval step.
+The orchestrator works in a workspace directory for project work, remembers context via `MEMORY.md` and session logs, and uses your Obsidian vault for searchable notes. The improved prompt runs immediately with no approval step.
 
 ## Before you start
 
@@ -99,8 +100,10 @@ cp .env.example .env
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
 | `OLLAMA_MODEL` | `gemma4:12b` | Model for prompt improvement |
-| `VAULT_PATH` | `/mnt/vault` | Path to your Obsidian vault |
+| `WORKSPACE_PATH` | `~/workspace` | Workspace for project work, MEMORY.md, and session logs |
+| `VAULT_PATH` | `/mnt/vault` | Path to your Obsidian vault (searchable notes) |
 | `VAULT_MAP_PATH` | `vault_map.md` | Path to optional vault map file |
+| `MIRROR_LOGS_TO_VAULT` | `false` | Copy session logs to `VAULT_PATH/Session-Logs/` |
 | `API_KEY` | *(required)* | Shared secret for Bearer token auth |
 | `JUNIE_TIMEOUT` | `1800` | Timeout in seconds for Junie runs |
 | `PORT` | `8000` | Port for uvicorn |
@@ -304,6 +307,17 @@ tests/
   fake_junie.py           # Mock Junie script for testing
 logs/                     # Created at runtime; contains runs.log
 ```
+
+## Memory and Session Logs
+
+The orchestrator maintains project memory in the workspace directory (`WORKSPACE_PATH`):
+
+- **`MEMORY.md`** — Permanent project memory: conventions, key decisions, and important paths. Edit this file to tell the orchestrator about your project.
+- **`session-logs/`** — One markdown file per run, containing a summary of what was asked, what was done, decisions made, and pending tasks.
+
+Before each run, the orchestrator reads `MEMORY.md` and the 3 most recent session summaries and includes them as context for the prompt builder. After each run, a session log is saved automatically.
+
+If `MIRROR_LOGS_TO_VAULT=true`, session logs are also copied to `VAULT_PATH/Session-Logs/` so they appear in Obsidian.
 
 ## Reply Format
 
