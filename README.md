@@ -4,6 +4,8 @@ A modular Python package for integrating [Junie CLI](https://github.com/jetbrain
 
 Designed for use with [AgentHub](https://github.com/LukaG712/AgentHub) as a reliable, reusable coding-agent execution backend. Also works as a standalone HTTP service compatible with Open WebUI.
 
+**Current version:** 1.0.0 — See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Key Features
 
 - **Git worktree isolation** — Each worker runs in its own isolated Git branch, preventing interference with the main checkout or other workers.

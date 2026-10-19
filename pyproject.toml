@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "junie-adapter"
-version = "0.1.0"
+version = "1.0.0"
 description = "Modular Python package for integrating Junie CLI execution with optional Ollama prompt refinement"
 readme = "README.md"
 requires-python = ">=3.10"
