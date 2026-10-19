@@ -1034,3 +1034,255 @@ class TestCleanupOrphanedSafety:
         assert info.worktree_path.exists()
         assert (info.worktree_path / "valuable.py").exists()
         assert info.worktree_path not in cleaned
+
+
+class TestIgnoredFilesPreservation:
+    """Tests for the ignored-file data-loss risk.
+
+    git status --porcelain excludes ignored files by default. A worktree
+    containing only ignored files (e.g., .env, __pycache__/, .DS_Store)
+    would appear clean and be auto-deleted. These tests verify that ignored
+    files are detected and the worktree is preserved.
+    """
+
+    def test_is_worktree_dirty_detects_ignored_env_file(self, tmp_path: Path):
+        """A worktree with only an ignored .env file should be detected as dirty."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create a .gitignore that ignores .env
+        (info.worktree_path / ".gitignore").write_text(".env\n", encoding="utf-8")
+        # Stage and commit the .gitignore so it's tracked
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
+                       check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
+                       cwd=str(info.worktree_path), check=True, capture_output=True)
+
+        # Create an ignored .env file
+        (info.worktree_path / ".env").write_text("SECRET_KEY=abc123\n", encoding="utf-8")
+
+        # The worktree should be detected as dirty because of the ignored file
+        assert _is_worktree_dirty(info.worktree_path) is True
+
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_is_worktree_dirty_detects_ignored_pycache(self, tmp_path: Path):
+        """A worktree with only an ignored __pycache__ directory should be dirty."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create a .gitignore that ignores __pycache__
+        (info.worktree_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
+                       check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
+                       cwd=str(info.worktree_path), check=True, capture_output=True)
+
+        # Create an ignored __pycache__ directory with a file
+        pycache = info.worktree_path / "__pycache__"
+        pycache.mkdir()
+        (pycache / "module.cpython-311.pyc").write_bytes(b"fake bytecode")
+
+        assert _is_worktree_dirty(info.worktree_path) is True
+
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_is_worktree_dirty_detects_hidden_file(self, tmp_path: Path):
+        """A worktree with only a hidden file should be detected as dirty."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create a hidden file (not ignored by .gitignore, but untracked)
+        (info.worktree_path / ".DS_Store").write_text("hidden data\n", encoding="utf-8")
+
+        # Untracked files are detected by git status --porcelain
+        assert _is_worktree_dirty(info.worktree_path) is True
+
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_is_worktree_dirty_clean_worktree(self, tmp_path: Path):
+        """A genuinely clean worktree should not be detected as dirty."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # No changes — worktree is clean
+        assert _is_worktree_dirty(info.worktree_path) is False
+
+        remove_worktree(info.worktree_path)
+
+    def test_orphan_cleanup_preserves_worktree_with_ignored_env(self, tmp_path: Path):
+        """Orphan cleanup must not delete a worktree containing only ignored .env files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create a .gitignore that ignores .env
+        (info.worktree_path / ".gitignore").write_text(".env\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
+                       check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
+                       cwd=str(info.worktree_path), check=True, capture_output=True)
+
+        # Create an ignored .env file
+        (info.worktree_path / ".env").write_text("SECRET_KEY=abc123\n", encoding="utf-8")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with valid gitdir metadata
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        # Recreate the gitdir metadata so git status works
+        git_worktrees_dir.mkdir(parents=True)
+        (info.worktree_path / ".gitignore").write_text(".env\n", encoding="utf-8")
+        (info.worktree_path / ".env").write_text("SECRET_KEY=abc123\n", encoding="utf-8")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Worktree with ignored .env must be preserved
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / ".env").exists()
+        assert info.worktree_path not in cleaned
+
+    def test_orphan_cleanup_preserves_worktree_with_nested_ignored_dir(self, tmp_path: Path):
+        """Orphan cleanup must not delete a worktree with nested ignored directories."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create .gitignore
+        (info.worktree_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
+                       check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
+                       cwd=str(info.worktree_path), check=True, capture_output=True)
+
+        # Create nested ignored directory
+        pycache = info.worktree_path / "__pycache__" / "submodule"
+        pycache.mkdir(parents=True)
+        (pycache / "cached.pyc").write_bytes(b"bytecode")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with valid gitdir metadata
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        git_worktrees_dir.mkdir(parents=True)
+        (info.worktree_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+        pycache = info.worktree_path / "__pycache__" / "submodule"
+        pycache.mkdir(parents=True)
+        (pycache / "cached.pyc").write_bytes(b"bytecode")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Worktree with nested ignored dir must be preserved
+        assert info.worktree_path.exists()
+        assert (pycache / "cached.pyc").exists()
+        assert info.worktree_path not in cleaned
+
+    def test_orphan_cleanup_preserves_worktree_with_local_only_files(self, tmp_path: Path):
+        """Orphan cleanup must not delete a worktree with local-only (untracked) files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create local-only files that a worker might generate
+        (info.worktree_path / "debug_log.txt").write_text("debug output\n", encoding="utf-8")
+        (info.worktree_path / "temp_notes.md").write_text("# Notes\nTODO\n", encoding="utf-8")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with valid gitdir metadata
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        git_worktrees_dir.mkdir(parents=True)
+        (info.worktree_path / "debug_log.txt").write_text("debug output\n", encoding="utf-8")
+        (info.worktree_path / "temp_notes.md").write_text("# Notes\nTODO\n", encoding="utf-8")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Worktree with local-only files must be preserved
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / "debug_log.txt").exists()
+        assert (info.worktree_path / "temp_notes.md").exists()
+        assert info.worktree_path not in cleaned
+
+    def test_orphan_cleanup_removes_genuinely_clean_worktree_stale_metadata(
+        self, tmp_path: Path
+    ):
+        """A genuinely clean orphaned worktree with stale metadata should be cleaned.
+
+        When gitdir metadata is missing (stale) and the worktree contains no files
+        beyond .git, it is safe to clean. This is the only scenario where automatic
+        deletion of an orphaned worktree is safe: we can't run git status, so we
+        scan for files directly.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with stale metadata but NO files
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        # Do NOT recreate git_worktrees_dir — metadata is stale
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Genuinely clean orphaned worktree should be cleaned
+        assert info.worktree_path in cleaned
+        assert not info.worktree_path.exists()
+
+    def test_orphan_cleanup_preserves_worktree_when_git_fails(self, tmp_path: Path):
+        """If git status fails on an orphaned worktree with valid gitdir, preserve it.
+
+        When gitdir metadata exists but git status fails (e.g., corrupted worktree),
+        the directory must be preserved rather than risk deleting unreviewed work.
+        This is the correct safety behavior: we cannot determine the dirty state,
+        so we preserve.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove worktree dir but keep gitdir metadata
+        shutil.rmtree(info.worktree_path)
+        # Do NOT remove git_worktrees_dir — metadata exists but is incomplete
+
+        # Recreate worktree dir with .git file pointing to existing but incomplete gitdir
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        (info.worktree_path / "valuable.py").write_text("important code\n", encoding="utf-8")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # git status will fail on this incomplete worktree — must be preserved
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / "valuable.py").exists()
+        assert info.worktree_path not in cleaned

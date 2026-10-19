@@ -262,22 +262,47 @@ def _is_junie_worktree_path(worktree_path: Path, git_root: Optional[Path] = None
 
 
 def _is_worktree_dirty(worktree_path: Path) -> bool:
-    """Check if a worktree has uncommitted changes (modified, staged, or untracked).
+    """Check if a worktree has uncommitted changes (modified, staged, untracked, or ignored).
 
     Args:
         worktree_path: Path to the worktree directory.
 
     Returns:
-        True if the worktree has any uncommitted changes.
+        True if the worktree has any uncommitted changes, including ignored files.
 
     Raises:
         RuntimeError: If Git status command fails and the dirty state cannot
             be determined. The caller must decide whether to preserve or delete.
     """
-    # Check for modified or staged files. If this fails, propagate the error
-    # so the caller knows the state is undetermined.
+    # Check for modified, staged, or untracked files. If this fails, propagate
+    # the error so the caller knows the state is undetermined.
     status_output = _run_git(["status", "--porcelain"], cwd=worktree_path)
-    return bool(status_output.strip())
+    if status_output.strip():
+        return True
+
+    # git status --porcelain excludes ignored files by default. A worktree
+    # containing only ignored files (e.g., .env, __pycache__/, .DS_Store)
+    # would appear clean above. Check for ignored files to prevent data loss.
+    try:
+        ignored_output = _run_git(
+            ["status", "--porcelain", "--ignored"], cwd=worktree_path
+        )
+        # --ignored output includes both untracked (??) and ignored (!!) entries.
+        # Filter out entries that are inside .git/ itself (Git internals).
+        for line in ignored_output.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Skip Git's own internal files
+            if line.startswith("!! .git/"):
+                continue
+            # Any remaining line (?? or !!) means there are local files
+            return True
+    except RuntimeError:
+        # If the ignored check fails, assume dirty to be safe
+        return True
+
+    return False
 
 
 def remove_worktree(
