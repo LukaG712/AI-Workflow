@@ -1,8 +1,16 @@
 import os
 import tempfile
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+
+class IsolationMode(Enum):
+    """Worktree isolation mode for worker execution."""
+    WORKTREE = "worktree"  # Use worktree isolation when Git is available
+    NONE = "none"  # No isolation, run in the project directory
+    REQUIRED = "required"  # Require worktree isolation, raise if not a Git repo
 
 
 @dataclass
@@ -18,6 +26,8 @@ class OrchestratorConfig:
     port: int = 8000
     junie_bin: str = "junie"
     vault_map_path: Optional[str] = None
+    max_concurrent_workers: int = 1  # JUNIE-3394: one session per project
+    isolation_mode: IsolationMode = IsolationMode.WORKTREE
 
     @property
     def workspace_dir(self) -> Path:
@@ -40,13 +50,15 @@ class OrchestratorConfig:
         workspace_env = os.getenv("WORKSPACE_PATH")
         vault_env = os.getenv("VAULT_PATH")
 
-        # Determine workspace path
-        if workspace_env:
-            workspace_path = workspace_env
-        elif vault_env:
-            workspace_path = vault_env
-        else:
-            workspace_path = None
+        # Determine workspace path — do NOT fall back to VAULT_PATH
+        # (VAULT_PATH is for Obsidian vault mirroring, not workspace)
+        workspace_path = workspace_env if workspace_env else None
+
+        isolation_str = os.getenv("ISOLATION_MODE", "worktree").lower()
+        try:
+            isolation_mode = IsolationMode(isolation_str)
+        except ValueError:
+            isolation_mode = IsolationMode.WORKTREE
 
         return cls(
             ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
@@ -60,6 +72,8 @@ class OrchestratorConfig:
             port=int(os.getenv("PORT", "8000")),
             junie_bin=os.getenv("JUNIE_BIN", "junie"),
             vault_map_path=os.getenv("VAULT_MAP_PATH"),
+            max_concurrent_workers=int(os.getenv("MAX_CONCURRENT_WORKERS", "1")),
+            isolation_mode=isolation_mode,
         )
 
     def validate(self, require_api_key: bool = False) -> None:
@@ -68,4 +82,25 @@ class OrchestratorConfig:
             raise RuntimeError(
                 "API_KEY environment variable is not set or is empty. "
                 "Set it in your .env file or as an environment variable."
+            )
+
+    def validate_workspace(self) -> None:
+        """Validate that the workspace path exists and is accessible.
+
+        Raises:
+            RuntimeError: If the workspace path is invalid.
+        """
+        ws = self.workspace_dir
+        if not ws.exists():
+            raise RuntimeError(
+                f"Workspace path does not exist: {ws}. "
+                "Set WORKSPACE_PATH to a valid directory."
+            )
+        if not ws.is_dir():
+            raise RuntimeError(
+                f"Workspace path is not a directory: {ws}"
+            )
+        if not os.access(ws, os.W_OK):
+            raise RuntimeError(
+                f"Workspace path is not writable: {ws}"
             )

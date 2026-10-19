@@ -104,6 +104,11 @@ class TestCleanupOrphanedWorktrees:
         # Remove the worktree directory manually to simulate a crash
         shutil.rmtree(info.worktree_path)
 
+        # Also remove Git's internal tracking to simulate a truly orphaned worktree
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
         # Recreate the directory to simulate an orphaned worktree
         info.worktree_path.mkdir(parents=True)
         # Create a .git file pointing to the main repo

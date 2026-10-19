@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -27,17 +28,17 @@ load_dotenv()
 
 # ─── App ─────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Junie Orchestrator")
-
-# Async lock for single-run Junie enforcement
-junie_lock = asyncio.Lock()
+# Lock for single-run Junie enforcement — use a simple flag instead of asyncio.Lock
+# to avoid issues with locked()/acquire() semantics in async context
+_junie_busy = False
 
 # Global config, set on startup
 config: Optional[OrchestratorConfig] = None
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    """Manage application startup and shutdown lifecycle."""
     global config
     config = OrchestratorConfig.from_env()
     config.validate(require_api_key=True)
@@ -51,6 +52,12 @@ async def startup():
     runs_logger.setLevel(logging.INFO)
     runs_logger.addHandler(logging.FileHandler(str(runs_log)))
     runs_logger.propagate = False
+    runs_logger.info("Junie Orchestrator started")
+    yield
+    runs_logger.info("Junie Orchestrator shutting down")
+
+
+app = FastAPI(title="Junie Orchestrator", lifespan=lifespan)
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
@@ -157,15 +164,46 @@ def _sse_chunk(content: str, comp_id: str, timestamp: int, model: str, finish_re
 
 
 async def stream_progress(improved_prompt: str, junie_answer: str, fallback: bool, error_reason: str, raw_prompt: str = "", model: str = "junie-workflow"):
-    """Stream with progress: improved prompt → 'Junie is working...' → final answer → stop → [DONE]."""
+    """Stream the completed reply as SSE events.
+
+    NOTE: This is post-completion streaming. The Junie CLI does not support
+    reliable incremental output, so the entire reply is sent after Junie
+    completes. Progress events are emitted as distinct event types, not
+    disguised as token chunks.
+    """
     timestamp = int(time.time())
     comp_id = f"chatcmpl-{timestamp}"
 
-    # Chunk 1: role + improved prompt
+    # Progress event: task completed
+    progress_data = json.dumps({
+        "type": "progress",
+        "status": "task_completed",
+        "message": "Junie has completed the task.",
+    })
+    yield f"event: progress\ndata: {progress_data}\n\n"
+
+    # Chunk 1: role + full reply
     reply = format_reply(improved_prompt, junie_answer, fallback, error_reason, raw_prompt)
     yield _sse_chunk(reply, comp_id, timestamp, model, role="assistant")
 
     # Chunk 2: stop
+    yield _sse_chunk(None, comp_id, timestamp, model, finish_reason="stop")
+    yield "data: [DONE]\n\n"
+
+
+async def stream_busy_event(model: str = "junie-workflow"):
+    """Stream a busy event when Junie is already running."""
+    timestamp = int(time.time())
+    comp_id = f"chatcmpl-{timestamp}"
+
+    progress_data = json.dumps({
+        "type": "progress",
+        "status": "busy",
+        "message": "Junie is currently busy. Please try again in a moment.",
+    })
+    yield f"event: progress\ndata: {progress_data}\n\n"
+
+    yield _sse_chunk("Junie is busy. Please try again in a moment.", comp_id, timestamp, model, role="assistant")
     yield _sse_chunk(None, comp_id, timestamp, model, finish_reason="stop")
     yield "data: [DONE]\n\n"
 
@@ -206,7 +244,11 @@ async def list_models(request: Request):
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    """Handle chat completion requests. Routes through prompt builder and Junie, or bypasses to Ollama."""
+    """Handle chat completion requests. Routes through prompt builder and Junie, or bypasses to Ollama.
+
+    NOTE: Streaming is post-completion. The Junie CLI does not support reliable
+    incremental output, so SSE events are sent after Junie completes.
+    """
     await require_auth(request)
 
     body = await request.json()
@@ -248,24 +290,46 @@ async def chat_completions(request: Request):
         vault_map = load_vault_map(config)
         improved_prompt, fallback, error_reason = await refine_prompt(raw_prompt, config, context, vault_map)
 
-    # Step 2: Run Junie with the prompt
+    # Step 2: Run Junie with the prompt — check busy flag
     junie_answer = ""
-    if not await junie_lock.acquire():
-        # This shouldn't happen with asyncio.Lock, but just in case
-        junie_answer = "Junie is busy. Please try again in a moment."
-    else:
-        try:
-            result = await run_junie_task(improved_prompt, config)
-            junie_answer = result.answer
-        finally:
-            junie_lock.release()
+    task_status = TaskStatus.COMPLETED
+
+    # Check if Junie is already running
+    global _junie_busy
+    if _junie_busy:
+        if stream:
+            return StreamingResponse(
+                stream_busy_event(),
+                media_type="text/event-stream",
+                status_code=503,
+            )
+        raise HTTPException(
+            status_code=503,
+            detail="Junie is currently busy. Please try again in a moment."
+        )
+
+    _junie_busy = True
+    try:
+        result = await run_junie_task(improved_prompt, config)
+        junie_answer = result.answer
+        if result.status != TaskStatus.COMPLETED:
+            task_status = result.status
+    except Exception as e:
+        junie_answer = f"Error running Junie: {e}"
+        task_status = TaskStatus.FAILED
+        runs_logger.error(f"Junie execution error: {e}")
+    finally:
+        _junie_busy = False
 
     reply = format_reply(improved_prompt, junie_answer, fallback, error_reason, raw_prompt)
 
     duration = time.time() - start_time
+    # Log only truncated previews, not full prompts
+    raw_preview = raw_prompt[:80]
+    improved_preview = improved_prompt[:80]
     runs_logger.info(
-        f"Request completed in {duration:.1f}s | Raw: {raw_prompt[:80]}... | "
-        f"Improved: {improved_prompt[:80]}... | Fallback: {fallback}"
+        f"Request completed in {duration:.1f}s | Raw: {raw_preview}... | "
+        f"Improved: {improved_preview}... | Fallback: {fallback}"
     )
 
     # Step 3: Save session log (if it fails, we still return the answer)
@@ -274,7 +338,7 @@ async def chat_completions(request: Request):
             raw_prompt=raw_prompt,
             refined_prompt=improved_prompt if (fallback or improved_prompt != raw_prompt) else None,
             answer=junie_answer,
-            status=TaskStatus.COMPLETED if not fallback else TaskStatus.COMPLETED,
+            status=task_status,
             error=error_reason if error_reason else None,
         )
         await log_session(session_log, config)

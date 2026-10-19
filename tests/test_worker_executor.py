@@ -131,7 +131,7 @@ class TestExecuteWorker:
         with patch(
             "junie_adapter.worker_executor.validate_git_repo", return_value=True
         ), patch(
-            "junie_adapter.worktree_manager.create_worktree", return_value=mock_info
+            "junie_adapter.worker_executor.create_worktree", return_value=mock_info
         ), patch(
             "junie_adapter.worktree_manager.get_changed_files", return_value=["file1.py"]
         ), patch(

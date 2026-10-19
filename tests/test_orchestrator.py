@@ -302,7 +302,7 @@ class TestMemoryLoader:
             memory_file.write_text("Test memory content", encoding="utf-8")
             context = load_context(config)
             assert "Test memory content" in context
-            assert "Project Memory" in context
+            assert "# Memory" in context
 
     def test_load_context_with_session_logs(self):
         """Test loading context with session logs."""
@@ -316,7 +316,8 @@ class TestMemoryLoader:
             log_file = logs_dir / "session-20240101-120000.md"
             log_file.write_text("# Session 1\n\nTest session log", encoding="utf-8")
             context = load_context(config)
-            assert "Test session log" in context
+            assert "# Session 1" in context
+            assert "# Recent Sessions" in context
 
     def test_load_vault_map_missing(self):
         """Test vault map returns empty when not configured."""
@@ -335,7 +336,9 @@ class TestMemoryLoader:
             map_file = Path(tmp) / "vault_map.md"
             map_file.write_text("Vault map content", encoding="utf-8")
             config = OrchestratorConfig(vault_map_path=str(map_file))
-            assert load_vault_map(config) == "Vault map content"
+            result = load_vault_map(config)
+            assert "Vault map content" in result
+            assert "# Vault Map" in result
 
 
 # ─── Obsidian tests ───────────────────────────────────────────────────────────
@@ -596,3 +599,480 @@ class TestIntegration:
             assert "Default memory" in context
             # Custom context would be passed directly, bypassing load_context
             # This is verified by the service layer test
+
+
+# ─── Context Provider tests ──────────────────────────────────────────────────
+
+
+class TestContextProvider:
+    """Test the pluggable context provider interface."""
+
+    def test_empty_context_provider(self):
+        """Test EmptyContextProvider returns empty string."""
+        from junie_adapter import EmptyContextProvider
+        provider = EmptyContextProvider()
+        assert provider.load_context() == ""
+
+    def test_memory_file_context_provider_no_files(self):
+        """Test MemoryFileContextProvider with no memory files."""
+        from junie_adapter import MemoryFileContextProvider, OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            provider = MemoryFileContextProvider(config)
+            context = provider.load_context()
+            assert context == ""
+
+    def test_memory_file_context_provider_with_memory(self):
+        """Test MemoryFileContextProvider loads MEMORY.md."""
+        from junie_adapter import MemoryFileContextProvider, OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            memory_file = Path(tmp) / "MEMORY.md"
+            memory_file.write_text("Test memory content", encoding="utf-8")
+            provider = MemoryFileContextProvider(config)
+            context = provider.load_context()
+            assert "Test memory content" in context
+            assert "# Memory" in context
+
+    def test_memory_file_context_provider_with_session_logs(self):
+        """Test MemoryFileContextProvider loads session logs."""
+        from junie_adapter import MemoryFileContextProvider, OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            logs_dir = Path(tmp) / "session-logs"
+            logs_dir.mkdir()
+            log_file = logs_dir / "session-20240101-120000.md"
+            log_file.write_text("# Session 1\n\nTest session log content", encoding="utf-8")
+            provider = MemoryFileContextProvider(config)
+            context = provider.load_context()
+            assert "# Session 1" in context
+            assert "# Recent Sessions" in context
+
+    def test_vault_map_context_provider_missing(self):
+        """Test VaultMapContextProvider returns empty when not configured."""
+        from junie_adapter import VaultMapContextProvider
+        provider = VaultMapContextProvider()
+        assert provider.load_context() == ""
+
+    def test_vault_map_context_provider_with_config(self):
+        """Test VaultMapContextProvider loads vault map."""
+        from junie_adapter import VaultMapContextProvider, OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            map_file = Path(tmp) / "vault_map.md"
+            map_file.write_text("Vault map content", encoding="utf-8")
+            config = OrchestratorConfig(vault_map_path=str(map_file))
+            provider = VaultMapContextProvider(config=config)
+            context = provider.load_context()
+            assert "Vault map content" in context
+            assert "# Vault Map" in context
+
+    def test_composite_context_provider(self):
+        """Test CompositeContextProvider combines multiple providers."""
+        from junie_adapter import (
+            CompositeContextProvider,
+            MemoryFileContextProvider,
+            VaultMapContextProvider,
+            OrchestratorConfig,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            memory_file = Path(tmp) / "MEMORY.md"
+            memory_file.write_text("Memory content", encoding="utf-8")
+            map_file = Path(tmp) / "vault_map.md"
+            map_file.write_text("Map content", encoding="utf-8")
+            config.vault_map_path = str(map_file)
+
+            provider = CompositeContextProvider([
+                MemoryFileContextProvider(config),
+                VaultMapContextProvider(config=config),
+            ])
+            context = provider.load_context()
+            assert "Memory content" in context
+            assert "Map content" in context
+
+    def test_create_default_context_provider_with_memory(self):
+        """Test factory creates provider with memory."""
+        from junie_adapter import create_default_context_provider, OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            provider = create_default_context_provider(config, include_memory=True)
+            assert provider.load_context() == ""  # No memory file
+
+    def test_create_default_context_provider_empty(self):
+        """Test factory returns EmptyContextProvider when nothing included."""
+        from junie_adapter import (
+            create_default_context_provider,
+            EmptyContextProvider,
+            OrchestratorConfig,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            provider = create_default_context_provider(
+                config, include_memory=False, include_vault_map=False
+            )
+            assert isinstance(provider, EmptyContextProvider)
+
+    def test_memory_loader_uses_context_provider(self):
+        """Test that load_context delegates to ContextProvider."""
+        from junie_adapter import OrchestratorConfig
+        from junie_adapter.memory_loader import load_context
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            memory_file = Path(tmp) / "MEMORY.md"
+            memory_file.write_text("Test memory", encoding="utf-8")
+            context = load_context(config)
+            assert "Test memory" in context
+
+
+# ─── IsolationMode tests ─────────────────────────────────────────────────────
+
+
+class TestIsolationMode:
+    """Test IsolationMode enum and configuration."""
+
+    def test_isolation_mode_enum_values(self):
+        """Test IsolationMode enum values."""
+        from junie_adapter import IsolationMode
+        assert IsolationMode.WORKTREE.value == "worktree"
+        assert IsolationMode.NONE.value == "none"
+        assert IsolationMode.REQUIRED.value == "required"
+
+    def test_isolation_mode_from_env(self):
+        """Test loading isolation mode from environment."""
+        from junie_adapter import IsolationMode
+        env = {"ISOLATION_MODE": "required"}
+        with patch.dict(os.environ, env, clear=True):
+            from junie_adapter.config import OrchestratorConfig
+            config = OrchestratorConfig.from_env()
+            assert config.isolation_mode == IsolationMode.REQUIRED
+
+    def test_isolation_mode_invalid_fallback(self):
+        """Test invalid isolation mode falls back to WORKTREE."""
+        from junie_adapter import IsolationMode
+        env = {"ISOLATION_MODE": "invalid_mode"}
+        with patch.dict(os.environ, env, clear=True):
+            from junie_adapter.config import OrchestratorConfig
+            config = OrchestratorConfig.from_env()
+            assert config.isolation_mode == IsolationMode.WORKTREE
+
+    def test_isolation_mode_default(self):
+        """Test default isolation mode is WORKTREE."""
+        from junie_adapter import IsolationMode
+        from junie_adapter.config import OrchestratorConfig
+        config = OrchestratorConfig()
+        assert config.isolation_mode == IsolationMode.WORKTREE
+
+
+# ─── validate_workspace tests ────────────────────────────────────────────────
+
+
+class TestValidateWorkspace:
+    """Test workspace validation."""
+
+    def test_validate_workspace_valid(self):
+        """Test validation passes for valid workspace."""
+        from junie_adapter import OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            config = OrchestratorConfig(workspace_path=tmp)
+            config.validate_workspace()  # Should not raise
+
+    def test_validate_workspace_not_exists(self):
+        """Test validation raises for non-existent workspace."""
+        from junie_adapter import OrchestratorConfig
+        config = OrchestratorConfig(workspace_path="/nonexistent/path")
+        with pytest.raises(RuntimeError, match="does not exist"):
+            config.validate_workspace()
+
+    def test_validate_workspace_not_writable(self):
+        """Test validation raises for non-writable workspace."""
+        from junie_adapter import OrchestratorConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.chmod(tmp, 0o000)
+                config = OrchestratorConfig(workspace_path=tmp)
+                # On Windows, admin users can still access 0o000 dirs, so skip
+                import platform
+                if platform.system() != "Windows":
+                    with pytest.raises(RuntimeError, match="not writable"):
+                        config.validate_workspace()
+            finally:
+                os.chmod(tmp, 0o755)  # Restore permissions for cleanup
+
+
+# ─── WorkerSemaphore tests ───────────────────────────────────────────────────
+
+
+class TestWorkerSemaphore:
+    """Test WorkerSemaphore concurrency limiter."""
+
+    def test_semaphore_limits_concurrency(self):
+        """Test that semaphore limits concurrent access."""
+        from junie_adapter import WorkerSemaphore
+
+        async def test():
+            sem = WorkerSemaphore(max_workers=2)
+            assert sem.active_count == 0
+
+            await sem.acquire()
+            assert sem.active_count == 1
+
+            await sem.acquire()
+            assert sem.active_count == 2
+
+            await sem.release()
+            assert sem.active_count == 1
+
+            await sem.release()
+            assert sem.active_count == 0
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+    def test_semaphore_blocks_when_full(self):
+        """Test that semaphore enforces max workers."""
+        from junie_adapter import WorkerSemaphore
+
+        async def test():
+            sem = WorkerSemaphore(max_workers=1)
+            await sem.acquire()
+            assert sem.active_count == 1
+
+            await sem.release()
+            assert sem.active_count == 0
+
+            # Verify we can acquire again after release
+            await sem.acquire()
+            assert sem.active_count == 1
+            await sem.release()
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+
+# ─── WorkerRegistry tests ────────────────────────────────────────────────────
+
+
+class TestWorkerRegistry:
+    """Test WorkerRegistry for tracking active workers."""
+
+    def test_register_and_get(self):
+        """Test registering and retrieving a worker."""
+        from junie_adapter import WorkerRegistry, WorkerExecution
+        from junie_adapter.models import WorkerStatus
+        from datetime import datetime
+
+        async def test():
+            registry = WorkerRegistry()
+            execution = WorkerExecution(
+                worker_id="worker-1",
+                task_id="task-1",
+                parent_task_id=None,
+                task_description="Test task",
+                project_path="/tmp/test",
+                worktree_path=None,
+                status=WorkerStatus.QUEUED,
+                pid=None,
+                start_time=datetime.now(),
+                end_time=None,
+                stdout="",
+                stderr="",
+                exit_code=None,
+                result_summary=None,
+                changed_files=[],
+                error=None,
+            )
+            await registry.register("worker-1", execution)
+            assert registry.active_count == 1
+
+            found = await registry.get("worker-1")
+            assert found is not None
+            assert found.worker_id == "worker-1"
+            assert found.status == WorkerStatus.RUNNING  # register sets RUNNING
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+    def test_complete_worker(self):
+        """Test completing a worker updates status."""
+        from junie_adapter import WorkerRegistry, WorkerExecution
+        from junie_adapter.models import WorkerStatus
+        from datetime import datetime
+
+        async def test():
+            registry = WorkerRegistry()
+            execution = WorkerExecution(
+                worker_id="worker-1",
+                task_id="task-1",
+                parent_task_id=None,
+                task_description="Test task",
+                project_path="/tmp/test",
+                worktree_path=None,
+                status=WorkerStatus.RUNNING,
+                pid=None,
+                start_time=datetime.now(),
+                end_time=datetime.now(),
+                stdout="Done",
+                stderr="",
+                exit_code=0,
+                result_summary="Done",
+                changed_files=[],
+                error=None,
+            )
+            await registry.register("worker-1", execution)
+            execution.status = WorkerStatus.COMPLETED
+            await registry.complete("worker-1", execution)
+
+            found = await registry.get("worker-1")
+            assert found.status == WorkerStatus.COMPLETED
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+    def test_remove_worker(self):
+        """Test removing a worker from registry."""
+        from junie_adapter import WorkerRegistry, WorkerExecution
+        from junie_adapter.models import WorkerStatus
+        from datetime import datetime
+
+        async def test():
+            registry = WorkerRegistry()
+            execution = WorkerExecution(
+                worker_id="worker-1",
+                task_id="task-1",
+                parent_task_id=None,
+                task_description="Test task",
+                project_path="/tmp/test",
+                worktree_path=None,
+                status=WorkerStatus.RUNNING,
+                pid=None,
+                start_time=datetime.now(),
+                end_time=None,
+                stdout="",
+                stderr="",
+                exit_code=None,
+                result_summary=None,
+                changed_files=[],
+                error=None,
+            )
+            await registry.register("worker-1", execution)
+            assert registry.active_count == 1
+
+            result = await registry.remove("worker-1")
+            assert result is True
+            assert registry.active_count == 0
+
+            result = await registry.remove("nonexistent")
+            assert result is False
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+    def test_get_active_workers(self):
+        """Test getting all active workers."""
+        from junie_adapter import WorkerRegistry, WorkerExecution
+        from junie_adapter.models import WorkerStatus
+        from datetime import datetime
+
+        async def test():
+            registry = WorkerRegistry()
+            for i in range(3):
+                execution = WorkerExecution(
+                    worker_id=f"worker-{i}",
+                    task_id=f"task-{i}",
+                    parent_task_id=None,
+                    task_description=f"Task {i}",
+                    project_path="/tmp/test",
+                    worktree_path=None,
+                    status=WorkerStatus.RUNNING,
+                    pid=None,
+                    start_time=datetime.now(),
+                    end_time=None,
+                    stdout="",
+                    stderr="",
+                    exit_code=None,
+                    result_summary=None,
+                    changed_files=[],
+                    error=None,
+                )
+                await registry.register(f"worker-{i}", execution)
+
+            active = await registry.get_active()
+            assert len(active) == 3
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+    def test_get_nonexistent_worker(self):
+        """Test getting a nonexistent worker returns None."""
+        from junie_adapter import WorkerRegistry
+
+        async def test():
+            registry = WorkerRegistry()
+            found = await registry.get("nonexistent")
+            assert found is None
+
+        asyncio.get_event_loop().run_until_complete(test())
+
+    def test_get_worker_registry_singleton(self):
+        """Test that get_worker_registry returns the same instance."""
+        from junie_adapter import get_worker_registry
+        reg1 = get_worker_registry()
+        reg2 = get_worker_registry()
+        assert reg1 is reg2
+
+
+# ─── Streaming tests ─────────────────────────────────────────────────────────
+
+
+class TestStreaming:
+    """Test streaming response helpers."""
+
+    def test_stream_progress_events(self):
+        """Test stream_progress emits correct event order."""
+        from junie_adapter.service import stream_progress
+
+        async def collect():
+            events = []
+            async for chunk in stream_progress(
+                improved_prompt="Test prompt",
+                junie_answer="Test answer",
+                fallback=False,
+                error_reason="",
+                raw_prompt="Test prompt",
+            ):
+                events.append(chunk)
+            return events
+
+        events = asyncio.get_event_loop().run_until_complete(collect())
+
+        # First event should be progress
+        assert "event: progress" in events[0]
+        assert "task_completed" in events[0]
+
+        # Last event should be [DONE]
+        assert "[DONE]" in events[-1]
+
+    def test_stream_busy_event(self):
+        """Test stream_busy_event emits busy status."""
+        from junie_adapter.service import stream_busy_event
+
+        async def collect():
+            events = []
+            async for chunk in stream_busy_event():
+                events.append(chunk)
+            return events
+
+        events = asyncio.get_event_loop().run_until_complete(collect())
+
+        # Should contain busy status
+        combined = "\n".join(events)
+        assert "busy" in combined
+        assert "[DONE]" in combined
+
+    def test_sse_event_format(self):
+        """Test SSE event formatting."""
+        from junie_adapter.service import sse_event
+        result = sse_event('{"test": "data"}')
+        assert result == 'data: {"test": "data"}\n\n'
+
+    def test_make_completion_response(self):
+        """Test completion response format."""
+        from junie_adapter.service import make_completion_response
+        result = make_completion_response("Test content")
+        assert result["object"] == "chat.completion"
+        assert result["choices"][0]["message"]["content"] == "Test content"
+        assert result["choices"][0]["finish_reason"] == "stop"

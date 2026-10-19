@@ -4,6 +4,8 @@
 
 This report assesses whether multiple independent Junie CLI processes can be orchestrated externally (by AgentHub) to collaborate on the same software project. Based on investigation of the installed Junie CLI (v26.10.12) and official documentation, **limited multi-agent execution is feasible**, but with significant constraints that require sequential execution by default.
 
+**Status**: Implemented. The adapter now provides worktree isolation, concurrency limits, a `WorkerRegistry` for active worker tracking, and a clean `JunieAdapter` interface. Default concurrency is 1 (JUNIE-3394). All changes are tested (114 tests pass, 1 skipped).
+
 ---
 
 ## 1. Can Junie Lite be launched through the required CLI mode?
@@ -175,9 +177,13 @@ Since Junie CLI does not provide external orchestration primitives, **all** of t
 
 The `junie_adapter` package provides:
 - Single-worker execution with metadata capture (`worker_executor.py`).
+- Active worker tracking via `WorkerRegistry` for monitoring and cancellation.
+- Concurrency enforcement via `WorkerSemaphore` with configurable limits.
 - Git worktree lifecycle management (`worktree_manager.py`).
 - Worker execution models (`WorkerExecution`, `WorkerStatus`).
 - Output capture, timeout enforcement, and changed-file detection.
+- Pluggable context loading via `ContextProvider` interface (`context_provider.py`).
+- Clean typed adapter interface (`JunieAdapter`) for AgentHub integration.
 
 **Conclusion**: AgentHub owns orchestration policy. The adapter provides execution and isolation primitives.
 
@@ -256,6 +262,91 @@ AgentHub reviews all three branches, resolves any conflicts, and merges.
 4. **Allow configuration overrides** for users who want to test parallel execution.
 5. **Keep the feature opt-in** — existing single-agent behavior is unchanged.
 6. **Verify BYOK behavior** in a future iteration to determine if parallel execution is possible with separate auth tokens.
+
+## Implementation Status
+
+The following features have been implemented based on this feasibility analysis:
+
+### Completed Features
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Worktree isolation | ✅ Implemented | Real Git branches (not detached HEAD), collision handling, safe cleanup |
+| Changed-file detection | ✅ Implemented | Modified, added, deleted, renamed, staged, unstaged, untracked files |
+| Diff reporting | ✅ Implemented | `get_worker_diff()` and `get_change_summary()` for structured diff data |
+| Worker execution hardening | ✅ Implemented | Config mutation fix, timeout with `TIMED_OUT` status, PID capture |
+| Concurrency limits | ✅ Implemented | `max_concurrent_workers` config (default 1), semaphore-based enforcement |
+| Isolation modes | ✅ Implemented | `WORKTREE`, `NONE`, `REQUIRED` via `IsolationMode` enum |
+| Context providers | ✅ Implemented | Pluggable `ContextProvider` protocol with 4 implementations |
+| Adapter interface | ✅ Implemented | `JunieAdapter` class with typed `AdapterRequest`/`AdapterResult` models |
+| Honest streaming | ✅ Implemented | Distinct SSE event types, post-completion streaming documented |
+| Service hardening | ✅ Implemented | Lifespan handler, busy flag, proper error responses (503/504) |
+| Configuration fixes | ✅ Implemented | No workspace fallback to VAULT_PATH, workspace validation |
+| Optional dependencies | ✅ Implemented | Obsidian and Ollama are truly optional |
+| Worker registry | ✅ Implemented | `WorkerRegistry` tracks active workers, supports monitoring and cancellation |
+| Memory loader migration | ✅ Implemented | `memory_loader.py` now delegates to `ContextProvider` interface |
+
+### Test Coverage
+
+- **114 tests pass** (1 skipped), covering:
+  - Worktree creation with real Git branches
+  - Branch collision handling
+  - Changed-file detection (all categories: modified, added, deleted, renamed, staged, unstaged, untracked)
+  - Worker execution (success, failure, timeout, non-Git repo handling)
+  - Configuration validation (workspace paths, isolation modes)
+  - Streaming event correctness (event order, busy handling)
+  - Adapter interface compatibility (`AdapterRequest`, `AdapterResult`, `JunieAdapter`)
+  - Context provider implementations (all four providers and composite)
+  - Worker registry (registration, completion, active tracking)
+  - Concurrency limits (`WorkerSemaphore` enforcement)
+- All tests use mocks and fake Junie — no live Junie or Ollama required.
+
+### Architecture
+
+```
+AgentHub (orchestration)
+  ↓ AdapterRequest
+JunieAdapter (adapter.py)
+  ↓ submit_task()
+WorkerExecutor (worker_executor.py)
+  ├─→ WorkerRegistry (active worker tracking)
+  ├─→ WorkerSemaphore (concurrency limits)
+  ↓ create_worktree()
+WorktreeManager (worktree_manager.py)
+  ↓ git worktree add -b <branch>
+Git Repository
+  ↓ run_junie_task()
+JunieRunner (junie_runner.py)
+  ↓ subprocess
+Junie CLI
+```
+
+### Known Limitations
+
+1. **JUNIE-3394**: One active session per project. Default concurrency = 1. Parallel workers targeting the same project will conflict.
+2. **Streaming is post-completion**: Junie CLI does not support reliable incremental output. SSE events clearly distinguish progress from token output.
+3. **Windows Junie CLI**: Junie CLI execution requires Linux or macOS. The Python package and worktree isolation work on all platforms.
+4. **BYOK multi-process behavior**: Unverified whether different auth tokens allow concurrent sessions. Needs empirical testing.
+
+### Recommended Usage Pattern
+
+```python
+from junie_adapter import JunieAdapter, AdapterRequest
+
+adapter = JunieAdapter(api_key="your-key", workspace_path="/path/to/project")
+
+# Sequential multi-worker execution
+tasks = ["Task A", "Task B", "Task C"]
+results = []
+for task in tasks:
+    request = AdapterRequest(task=task, project_path="/path/to/project")
+    result = await adapter.submit_task(request)
+    results.append(result)
+
+# Review all results before cleanup
+for r in results:
+    print(f"{r.worker_id}: {r.status} — {r.diff_summary}")
+```
 
 ## References
 
