@@ -844,3 +844,193 @@ class TestCleanupOrphanedSafety:
 
         cleaned = cleanup_orphaned_worktrees(repo, base_dir=fake_base)
         assert cleaned == []
+
+    def test_missing_git_file_with_valuable_files_preserved(self, tmp_path: Path):
+        """A directory without .git file must be preserved, even if it contains valuable files.
+
+        This tests the safety guarantee: never delete a directory merely because
+        its Git metadata is missing. If we cannot establish the relationship to Git,
+        preserve the directory for manual inspection.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a directory with valuable files but no .git file
+        no_git_dir = worktrees_dir / "valuable-work"
+        no_git_dir.mkdir()
+        (no_git_dir / "important_data.csv").write_text("col1,col2\n1,2\n", encoding="utf-8")
+        (no_git_dir / "research_notes.md").write_text("# Research\nImportant findings\n", encoding="utf-8")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Directory must be preserved
+        assert no_git_dir.exists()
+        assert (no_git_dir / "important_data.csv").exists()
+        assert (no_git_dir / "research_notes.md").exists()
+        assert no_git_dir not in cleaned
+
+    def test_dirty_state_inspection_failure_preserves_directory(self, tmp_path: Path):
+        """If _is_worktree_dirty() fails, the directory must be preserved.
+
+        This tests the safety guarantee: if we cannot determine whether a worktree
+        is dirty, we preserve it rather than risk deleting unreviewed work.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with valid .git file
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        (info.worktree_path / "valuable.py").write_text("important code\n", encoding="utf-8")
+
+        # Patch _is_worktree_dirty to simulate git status failure
+        import junie_adapter.worktree_manager as wm_module
+
+        original_dirty = wm_module._is_worktree_dirty
+
+        def failing_dirty(path):
+            raise RuntimeError("git status failed: repository corrupt")
+
+        with patch.object(wm_module, "_is_worktree_dirty", failing_dirty):
+            cleaned = wm_module.cleanup_orphaned_worktrees(repo)
+
+        # Directory must be preserved because dirty check failed
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / "valuable.py").exists()
+        assert info.worktree_path not in cleaned
+
+    def test_unclassifiable_directory_preserved(self, tmp_path: Path):
+        """A directory with unrecognized .git format must be preserved.
+
+        If a .git file exists but doesn't contain a valid gitdir: directive,
+        we cannot confirm this is a worktree — preserve for manual inspection.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a directory with a .git file that has unrecognized format
+        unclassifiable = worktrees_dir / "unclassifiable"
+        unclassifiable.mkdir()
+        (unclassifiable / ".git").write_text("some random content\n", encoding="utf-8")
+        (unclassifiable / "data.txt").write_text("should survive\n", encoding="utf-8")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Directory must be preserved
+        assert unclassifiable.exists()
+        assert (unclassifiable / "data.txt").exists()
+        assert unclassifiable not in cleaned
+
+    def test_missing_gitdir_metadata_with_valuable_files_preserved(self, tmp_path: Path):
+        """Missing gitdir metadata alone must not trigger deletion.
+
+        Even when the gitdir path from the .git file no longer exists (truly orphaned),
+        the cleanup function must still check the dirty state before deleting.
+        A clean orphaned worktree is safe to delete, but a dirty one is not.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with stale metadata and dirty changes
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        # Add untracked (dirty) file
+        (info.worktree_path / "unreviewed_work.py").write_text("critical work\n", encoding="utf-8")
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Dirty orphaned worktree must be preserved
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / "unreviewed_work.py").exists()
+        assert info.worktree_path not in cleaned
+
+    def test_clean_orphaned_worktree_with_stale_metadata_cleaned(self, tmp_path: Path):
+        """A truly orphaned and clean worktree with stale metadata should be cleaned.
+
+        When all safety checks pass (ownership verified, path valid, orphaned,
+        stale metadata, and clean worktree), the directory can be safely deleted.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree with stale metadata but NO dirty changes
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        # No additional files — worktree is clean
+
+        cleaned = cleanup_orphaned_worktrees(repo)
+
+        # Clean orphaned worktree should be cleaned
+        assert info.worktree_path in cleaned
+        assert not info.worktree_path.exists()
+
+    def test_git_status_failure_on_orphan_preserves_directory(self, tmp_path: Path):
+        """If git status fails on an orphaned worktree, preserve the directory.
+
+        This is the most critical safety test: when the Git command itself fails
+        (not just returns dirty), the directory must be preserved.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as orphaned worktree
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+        (info.worktree_path / "valuable.py").write_text("important code\n", encoding="utf-8")
+
+        # Patch _run_git to fail on git status commands
+        import junie_adapter.worktree_manager as wm_module
+
+        original_run_git = wm_module._run_git
+
+        def failing_status_git(args, cwd=None):
+            # Fail only on git status commands
+            if "status" in args:
+                raise RuntimeError("git status failed: unable to read repository")
+            return original_run_git(args, cwd=cwd)
+
+        with patch.object(wm_module, "_run_git", failing_status_git):
+            cleaned = wm_module.cleanup_orphaned_worktrees(repo)
+
+        # Directory must be preserved because git status failed
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / "valuable.py").exists()
+        assert info.worktree_path not in cleaned

@@ -269,14 +269,15 @@ def _is_worktree_dirty(worktree_path: Path) -> bool:
 
     Returns:
         True if the worktree has any uncommitted changes.
+
+    Raises:
+        RuntimeError: If Git status command fails and the dirty state cannot
+            be determined. The caller must decide whether to preserve or delete.
     """
-    try:
-        # Check for modified or staged files
-        status_output = _run_git(["status", "--porcelain"], cwd=worktree_path)
-        return bool(status_output.strip())
-    except RuntimeError:
-        # If we can't check, assume dirty to be safe
-        return True
+    # Check for modified or staged files. If this fails, propagate the error
+    # so the caller knows the state is undetermined.
+    status_output = _run_git(["status", "--porcelain"], cwd=worktree_path)
+    return bool(status_output.strip())
 
 
 def remove_worktree(
@@ -580,44 +581,122 @@ def cleanup_orphaned_worktrees(
             )
             continue
 
-        # Check for unreviewed changes — never delete dirty worktrees.
-        # However, orphaned worktrees with stale .git metadata will often
-        # appear "dirty" because git status shows all files as deleted
-        # (the worktrees metadata is gone). We distinguish this case by
-        # checking whether the gitdir path from the .git file actually exists.
-        # If it doesn't exist, the worktree is truly orphaned and safe to clean.
+        # Safety check: the directory must have a .git file to be classified
+        # as a Junie worktree. Without it, we cannot establish the relationship
+        # to Git — preserve for manual inspection.
         git_file_for_check = item / ".git"
-        if git_file_for_check.exists():
+        if not git_file_for_check.exists():
+            runs_logger.warning(
+                f"Skipping orphaned directory without .git file — "
+                f"cannot establish Git relationship: {item}. "
+                "Preserving for manual inspection."
+            )
+            continue
+
+        # Read the .git file to determine the worktree's state
+        try:
+            content = git_file_for_check.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            runs_logger.warning(
+                f"Cannot read .git file for orphaned directory — "
+                f"preserving for manual inspection: {item}. Error: {e}"
+            )
+            continue
+
+        # A legitimate worktree .git file contains "gitdir: <path>".
+        # Without this directive, we cannot confirm this is a worktree.
+        if not content.startswith("gitdir:"):
+            runs_logger.warning(
+                f"Skipping orphaned directory with unrecognized .git format: {item}. "
+                "Preserving for manual inspection."
+            )
+            continue
+
+        # Extract and resolve the gitdir path
+        gitdir_value = content[len("gitdir:"):].strip()
+        try:
+            gitdir_path = Path(gitdir_value)
+            if not gitdir_path.is_absolute():
+                gitdir_path = (item / gitdir_path).resolve()
+            else:
+                gitdir_path = gitdir_path.resolve()
+        except Exception as e:
+            runs_logger.warning(
+                f"Cannot resolve gitdir path for orphaned directory — "
+                f"preserving for manual inspection: {item}. Error: {e}"
+            )
+            continue
+
+        # If the gitdir metadata no longer exists, the worktree is truly orphaned.
+        # git status will fail on such worktrees because the gitfile points to
+        # a non-existent path. We must handle this case separately.
+        gitdir_missing = not gitdir_path.exists()
+        if gitdir_missing:
+            runs_logger.info(
+                f"Orphaned worktree has stale metadata: {item}. "
+                "Checking contents before cleanup."
+            )
+
+        # Check for unreviewed changes. This is the critical safety gate:
+        # if we cannot determine the dirty state, we preserve the directory.
+        # However, if the gitdir metadata is already known to be missing,
+        # git status will inevitably fail — in that case, check for untracked
+        # files manually instead of relying on git status.
+        dirty = False
+        if gitdir_missing:
+            # git status will fail on stale worktrees. Check for untracked
+            # files by scanning the directory for non-.git files.
             try:
-                content = git_file_for_check.read_text(encoding="utf-8").strip()
-                if content.startswith("gitdir:"):
-                    gitdir_value = content[len("gitdir:"):].strip()
-                    gitdir_path = Path(gitdir_value)
-                    if not gitdir_path.is_absolute():
-                        gitdir_path = (item / gitdir_path).resolve()
-                    else:
-                        gitdir_path = gitdir_path.resolve()
-                    # If the gitdir metadata no longer exists, this worktree
-                    # is truly orphaned — safe to clean regardless of dirty state.
-                    if not gitdir_path.exists():
-                        runs_logger.info(
-                            f"Orphaned worktree has stale metadata, safe to clean: {item}"
-                        )
-                    elif _is_worktree_dirty(item):
-                        runs_logger.warning(
-                            f"Skipping orphaned worktree with unreviewed changes: {item}"
-                        )
-                        continue
-                    # If gitdir exists and worktree is clean, proceed to cleanup
-                elif _is_worktree_dirty(item):
+                has_files = any(
+                    f.name != ".git" for f in item.iterdir()
+                )
+                if has_files:
+                    # The orphaned worktree contains files beyond .git.
+                    # These could be unreviewed changes — preserve the directory.
                     runs_logger.warning(
-                        f"Skipping orphaned worktree with unreviewed changes: {item}"
+                        f"Skipping orphaned worktree with files — "
+                        f"preserving for manual inspection: {item}"
                     )
                     continue
-            except RuntimeError:
-                # git status failed — allow cleanup of orphaned worktree
-                pass
+            except Exception as e:
+                runs_logger.warning(
+                    f"Cannot scan orphaned worktree directory — "
+                    f"preserving for manual inspection: {item}. Error: {e}"
+                )
+                continue
+            # No files beyond .git — safe to clean
+        else:
+            # gitdir metadata exists — git status should work
+            try:
+                dirty = _is_worktree_dirty(item)
+            except RuntimeError as e:
+                # _is_worktree_dirty() raised — git status failed even though
+                # gitdir metadata exists. We cannot safely determine the state.
+                runs_logger.warning(
+                    f"Cannot determine dirty state of orphaned worktree — "
+                    f"preserving for manual inspection: {item}. "
+                    f"Git status failed: {e}"
+                )
+                continue
+            except Exception as e:
+                runs_logger.warning(
+                    f"Unexpected error checking orphaned worktree — "
+                    f"preserving for manual inspection: {item}. Error: {e}"
+                )
+                continue
 
+            if dirty:
+                runs_logger.warning(
+                    f"Skipping orphaned worktree with unreviewed changes: {item}"
+                )
+                continue
+
+        # All safety checks passed:
+        # 1. Directory is inside the correct .junie-worktrees base
+        # 2. Ownership verified via _verify_worktree_ownership
+        # 3. .git file exists and contains valid gitdir: directive
+        # 4. Dirty state is known and worktree is clean
+        # 5. Directory is not tracked by Git (orphaned)
         try:
             runs_logger.info(f"Cleaning orphaned worktree: {item}")
             import shutil
