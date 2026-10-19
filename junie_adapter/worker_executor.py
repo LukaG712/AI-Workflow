@@ -399,7 +399,7 @@ async def execute_worker_and_cleanup(
     if result.worktree_path:
         try:
             worktree_path = Path(result.worktree_path)
-            remove_worktree(worktree_path)
+            remove_worktree(worktree_path, force=True)
             runs_logger.info(f"Cleaned up worktree for worker {worker_id}")
         except Exception as e:
             runs_logger.warning(

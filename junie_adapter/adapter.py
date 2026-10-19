@@ -291,7 +291,7 @@ class JunieAdapter:
             True if the worktree was removed, False if it didn't exist.
         """
         try:
-            return remove_worktree(Path(worktree_path))
+            return remove_worktree(Path(worktree_path), force=True)
         except Exception as e:
             logger.error(f"Failed to cleanup worktree: {e}")
             return False

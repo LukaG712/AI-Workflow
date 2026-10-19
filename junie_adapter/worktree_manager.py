@@ -227,30 +227,87 @@ def cleanup_branch(branch_name: str, project_path: Path) -> bool:
         return False
 
 
-def _is_junie_worktree_path(worktree_path: Path) -> bool:
-    """Check if a path is inside a .junie-worktrees directory."""
-    parts = worktree_path.parts
-    return ".junie-worktrees" in parts
+def _is_junie_worktree_path(worktree_path: Path, git_root: Optional[Path] = None) -> bool:
+    """Check if a resolved path is inside the correct .junie-worktrees directory.
+
+    Validates that the path is not only named `.junie-worktrees` but actually
+    lives next to the expected Git repository root. Resolves symlinks to prevent
+    escape attacks.
+
+    Args:
+        worktree_path: Path to check (will be resolved).
+        git_root: Expected Git repository root. If provided, verifies the
+            `.junie-worktrees` directory is directly under this root's parent.
+
+    Returns:
+        True if the path is a legitimate Junie worktree path.
+    """
+    resolved = worktree_path.resolve()
+
+    # Check that .junie-worktrees is in the resolved path components
+    if ".junie-worktrees" not in resolved.parts:
+        return False
+
+    # If git_root is provided, verify the .junie-worktrees directory is
+    # actually the one belonging to that repo (not a同名 directory elsewhere)
+    if git_root is not None:
+        expected_base = git_root.resolve().parent / ".junie-worktrees"
+        try:
+            resolved.relative_to(expected_base.resolve())
+        except ValueError:
+            # Not under the expected .junie-worktrees directory
+            return False
+
+    return True
 
 
-def remove_worktree(worktree_path: Path, branch_name: Optional[str] = None, project_path: Optional[Path] = None) -> bool:
+def _is_worktree_dirty(worktree_path: Path) -> bool:
+    """Check if a worktree has uncommitted changes (modified, staged, or untracked).
+
+    Args:
+        worktree_path: Path to the worktree directory.
+
+    Returns:
+        True if the worktree has any uncommitted changes.
+    """
+    try:
+        # Check for modified or staged files
+        status_output = _run_git(["status", "--porcelain"], cwd=worktree_path)
+        return bool(status_output.strip())
+    except RuntimeError:
+        # If we can't check, assume dirty to be safe
+        return True
+
+
+def remove_worktree(
+    worktree_path: Path,
+    branch_name: Optional[str] = None,
+    project_path: Optional[Path] = None,
+    force: bool = False,
+) -> bool:
     """Remove a Git worktree and its associated branch.
 
     Resolves and validates paths before deleting anything. Restricts manual
     directory deletion to confirmed Junie worktrees inside the designated
     `.junie-worktrees` directory. Never deletes the main checkout or an
-    unrelated directory.
+    unrelated directory. Refuses to delete a dirty worktree (one with
+    uncommitted changes) unless ``force=True`` is explicitly passed.
 
     Args:
         worktree_path: Path to the worktree directory.
         branch_name: Optional branch name to clean up after removing the worktree.
-        project_path: Optional project path for branch cleanup.
+        project_path: Optional project path for branch cleanup and ownership
+            verification.
+        force: If True, allow deletion even when the worktree contains
+            uncommitted changes. Defaults to False.
 
     Returns:
         True if the worktree was removed, False if it didn't exist.
 
     Raises:
-        RuntimeError: If Git commands fail or the path is not a safe Junie worktree.
+        RuntimeError: If Git commands fail, the path is not a safe Junie
+            worktree, or the worktree contains unreviewed changes and
+            ``force`` is False.
     """
     resolved = worktree_path.resolve()
 
@@ -258,12 +315,16 @@ def remove_worktree(worktree_path: Path, branch_name: Optional[str] = None, proj
         runs_logger.info(f"Worktree already removed: {resolved}")
         return False
 
+    # Determine the git_root for ownership checks
+    git_root_for_check: Optional[Path] = None
+    if project_path is not None:
+        try:
+            git_root_for_check = _get_git_root(project_path).resolve()
+        except RuntimeError:
+            pass
+
     # Safety check: never delete the main checkout
-    # A worktree's git root is the worktree itself, so we need to check
-    # whether this path is the actual main checkout vs a worktree.
-    # Worktrees live inside .junie-worktrees, so if the path is inside
-    # that directory, it's safe to proceed.
-    if not _is_junie_worktree_path(resolved):
+    if not _is_junie_worktree_path(resolved, git_root_for_check):
         try:
             git_root = _get_git_root(resolved)
             if resolved == git_root:
@@ -275,21 +336,64 @@ def remove_worktree(worktree_path: Path, branch_name: Optional[str] = None, proj
                     "This is not a Junie worktree."
                 )
         except RuntimeError as e:
-            # If the error is about main checkout, re-raise it
             if "main Git checkout" in str(e):
                 raise
-            # Not a Git repo — proceed with caution
             pass
 
+    # Check for unreviewed changes before allowing removal.
+    # Only check if this looks like a valid Git worktree (has .git file).
+    # If there's no .git file, the Git command will fail and we'll handle
+    # that in the removal section below.
+    if not force:
+        git_file = resolved / ".git"
+        if git_file.exists():
+            try:
+                if _is_worktree_dirty(resolved):
+                    runs_logger.warning(
+                        f"Refusing to remove dirty worktree: {resolved}. "
+                        "Use force=True to override."
+                    )
+                    raise RuntimeError(
+                        f"Worktree {resolved} contains uncommitted changes. "
+                        "Commit or discard changes first, or pass force=True."
+                    )
+            except RuntimeError as e:
+                if "uncommitted changes" in str(e):
+                    raise
+                # If we can't check dirty state on a valid worktree,
+                # assume dirty and refuse
+                runs_logger.warning(
+                    f"Cannot check worktree dirty state, refusing removal: {resolved}"
+                )
+                raise RuntimeError(
+                    f"Cannot verify worktree {resolved} is clean. "
+                    "Manual inspection required."
+                ) from e
+        # No .git file — skip dirty check; the removal logic below will
+        # handle the missing .git file case.
+
     try:
-        # Try to remove the worktree properly first
-        _run_git(["worktree", "remove", "--force", str(resolved)])
+        # Try to remove the worktree properly
+        _run_git(["worktree", "remove", str(resolved)])
         runs_logger.info(f"Removed worktree: {resolved}")
     except RuntimeError as e:
         runs_logger.warning(f"Failed to remove worktree via git: {e}")
         # Fallback: only manually remove if it's a confirmed Junie worktree
-        if _is_junie_worktree_path(resolved):
-            # Verify it looks like a worktree by checking for .git file
+        # with verified ownership
+        if _is_junie_worktree_path(resolved, git_root_for_check):
+            # Verify ownership before any manual deletion
+            if git_root_for_check is not None and not _verify_worktree_ownership(
+                resolved, git_root_for_check
+            ):
+                runs_logger.error(
+                    f"Refusing to delete {resolved}: ownership verification failed. "
+                    "Manual cleanup required."
+                )
+                raise RuntimeError(
+                    f"Refusing to delete {resolved}: not owned by the expected repo. "
+                    "Manual cleanup required."
+                )
+
             git_file = resolved / ".git"
             if git_file.exists():
                 import shutil
@@ -327,13 +431,14 @@ def remove_worktree(worktree_path: Path, branch_name: Optional[str] = None, proj
 def _verify_worktree_ownership(item: Path, git_root: Path) -> bool:
     """Verify that a directory is a worktree belonging to the given Git repo.
 
-    Checks that the `.git` file exists and points to the main repository's
-    `.git` directory. Does not rely solely on the presence of the string
-    `gitdir` in the file content.
+    Uses canonical path resolution to confirm the worktree's Git metadata
+    points to the main repository. Does not rely on substring matching that
+    could be fooled by forged paths (e.g., `/my-repo-backup/.git` matching
+    `/my-repo/.git`).
 
     Args:
         item: Path to the potential worktree directory.
-        git_root: Path to the main Git repository root.
+        git_root: Path to the main Git repository root (will be resolved).
 
     Returns:
         True if the directory is confirmed as a worktree of the given repo.
@@ -347,29 +452,42 @@ def _verify_worktree_ownership(item: Path, git_root: Path) -> bool:
     except Exception:
         return False
 
-    # A worktree .git file contains either:
-    # 1. "gitdir: <path>" pointing to the main repo's .git/worktrees/<branch>
-    # 2. A direct path to the main repo's .git directory
-    # We verify ownership by checking the content references the main repo.
-    git_root_str = str(git_root)
-    git_dir_str = str(git_root / ".git")
+    # Resolve git_root to its canonical form
+    git_root_resolved = git_root.resolve()
+    expected_git_dir = (git_root_resolved / ".git").resolve()
 
-    # Normalize path separators for comparison
-    content_normalized = content.replace("\\", "/")
-    git_root_normalized = git_root_str.replace("\\", "/")
-    git_dir_normalized = git_dir_str.replace("\\", "/")
+    # A worktree .git file contains "gitdir: <path>" pointing to
+    # .git/worktrees/<branch> in the main repo's .git directory.
+    # Extract the path from the gitdir: directive.
+    if not content.startswith("gitdir:"):
+        return False
 
-    # Check if the .git file points to this repo's .git directory
-    if git_dir_normalized in content_normalized or git_root_normalized in content_normalized:
+    gitdir_value = content[len("gitdir:"):].strip()
+
+    # Resolve the gitdir path to its canonical form
+    # It may be relative (to the worktree) or absolute
+    try:
+        gitdir_path = Path(gitdir_value)
+        if not gitdir_path.is_absolute():
+            gitdir_path = (item / gitdir_path).resolve()
+        else:
+            gitdir_path = gitdir_path.resolve()
+    except Exception:
+        return False
+
+    # The gitdir path should be under the expected .git directory
+    # of the main repository. Typically it is:
+    # <git_root>/.git/worktrees/<branch_name>
+    try:
+        gitdir_path.relative_to(expected_git_dir)
         return True
-
-    # Also check for gitdir: prefix pointing to worktrees dir of this repo
-    if content_normalized.startswith("gitdir:"):
-        gitdir_path = content_normalized[len("gitdir:"):].strip()
-        if git_dir_normalized in gitdir_path or git_root_normalized in gitdir_path:
+    except ValueError:
+        # Also check if gitdir points directly to the .git directory
+        try:
+            gitdir_path.relative_to(git_root_resolved / ".git")
             return True
-
-    return False
+        except ValueError:
+            return False
 
 
 def cleanup_orphaned_worktrees(
@@ -383,6 +501,9 @@ def cleanup_orphaned_worktrees(
     can be positively identified as Junie worktrees belonging to the given
     repository. Never deletes the main checkout or unrelated directories.
 
+    If ``git worktree list`` or another essential safety check fails, aborts
+    with a RuntimeError instead of assuming there are no tracked worktrees.
+
     Args:
         project_path: Path to the Git repository.
         base_dir: Optional base directory to scan. Defaults to the project's
@@ -390,6 +511,10 @@ def cleanup_orphaned_worktrees(
 
     Returns:
         List of paths that were cleaned up.
+
+    Raises:
+        RuntimeError: If essential Git commands fail (e.g., ``git worktree list``),
+            because the safety of cleanup cannot be verified.
     """
     if not validate_git_repo(project_path):
         runs_logger.warning(f"Cannot clean up worktrees: {project_path} is not a Git repo.")
@@ -405,25 +530,37 @@ def cleanup_orphaned_worktrees(
         return []
 
     # Safety: ensure base_dir is actually a .junie-worktrees directory
-    if ".junie-worktrees" not in base_dir.parts:
+    # belonging to this specific repo, not just any directory with that name
+    expected_base = git_root.parent / ".junie-worktrees"
+    if base_dir != expected_base.resolve():
         runs_logger.error(
-            f"Refusing to scan non-Junie directory for orphaned worktrees: {base_dir}"
+            f"Refusing to scan non-Junie directory for orphaned worktrees: {base_dir}. "
+            f"Expected: {expected_base}"
         )
         return []
 
     cleaned: List[Path] = []
 
-    # Get list of all tracked worktrees
+    # Get list of all tracked worktrees — essential safety check.
+    # If this fails, we cannot safely determine what is orphaned, so abort.
     try:
         tracked_output = _run_git(["worktree", "list"], cwd=project_path)
-        tracked_paths = set()
-        for line in tracked_output.splitlines():
-            if line.strip():
-                # Git may use forward slashes on Windows; normalize
-                wt_path_str = line.split()[0].replace("/", "\\")
-                tracked_paths.add(Path(wt_path_str).resolve())
-    except RuntimeError:
-        tracked_paths = set()
+    except RuntimeError as e:
+        runs_logger.error(
+            f"Cannot list tracked worktrees — aborting cleanup: {e}. "
+            "Manual inspection required."
+        )
+        raise RuntimeError(
+            f"Cannot verify tracked worktrees for {project_path}. "
+            "Git worktree list failed — aborting cleanup."
+        ) from e
+
+    tracked_paths = set()
+    for line in tracked_output.splitlines():
+        if line.strip():
+            # Git may use forward slashes on Windows; normalize
+            wt_path_str = line.split()[0].replace("/", "\\")
+            tracked_paths.add(Path(wt_path_str).resolve())
 
     # Find orphaned worktree directories
     for item in base_dir.iterdir():
@@ -436,12 +573,50 @@ def cleanup_orphaned_worktrees(
         if resolved in tracked_paths:
             continue
 
-        # Verify ownership before deletion
+        # Verify ownership before deletion — must use canonical path resolution
         if not _verify_worktree_ownership(item, git_root):
             runs_logger.info(
                 f"Skipping unowned directory during orphan cleanup: {item}"
             )
             continue
+
+        # Check for unreviewed changes — never delete dirty worktrees.
+        # However, orphaned worktrees with stale .git metadata will often
+        # appear "dirty" because git status shows all files as deleted
+        # (the worktrees metadata is gone). We distinguish this case by
+        # checking whether the gitdir path from the .git file actually exists.
+        # If it doesn't exist, the worktree is truly orphaned and safe to clean.
+        git_file_for_check = item / ".git"
+        if git_file_for_check.exists():
+            try:
+                content = git_file_for_check.read_text(encoding="utf-8").strip()
+                if content.startswith("gitdir:"):
+                    gitdir_value = content[len("gitdir:"):].strip()
+                    gitdir_path = Path(gitdir_value)
+                    if not gitdir_path.is_absolute():
+                        gitdir_path = (item / gitdir_path).resolve()
+                    else:
+                        gitdir_path = gitdir_path.resolve()
+                    # If the gitdir metadata no longer exists, this worktree
+                    # is truly orphaned — safe to clean regardless of dirty state.
+                    if not gitdir_path.exists():
+                        runs_logger.info(
+                            f"Orphaned worktree has stale metadata, safe to clean: {item}"
+                        )
+                    elif _is_worktree_dirty(item):
+                        runs_logger.warning(
+                            f"Skipping orphaned worktree with unreviewed changes: {item}"
+                        )
+                        continue
+                    # If gitdir exists and worktree is clean, proceed to cleanup
+                elif _is_worktree_dirty(item):
+                    runs_logger.warning(
+                        f"Skipping orphaned worktree with unreviewed changes: {item}"
+                    )
+                    continue
+            except RuntimeError:
+                # git status failed — allow cleanup of orphaned worktree
+                pass
 
         try:
             runs_logger.info(f"Cleaning orphaned worktree: {item}")

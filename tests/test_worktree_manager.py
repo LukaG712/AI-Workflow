@@ -22,6 +22,8 @@ from junie_adapter.worktree_manager import (
     remove_worktree,
     validate_git_repo,
     _verify_worktree_ownership,
+    _is_junie_worktree_path,
+    _is_worktree_dirty,
 )
 
 
@@ -116,9 +118,11 @@ class TestCleanupOrphanedWorktrees:
 
         # Recreate the directory to simulate an orphaned worktree
         info.worktree_path.mkdir(parents=True)
-        # Create a .git file pointing to the main repo
+        # Create a .git file pointing to the now-deleted worktrees metadata
+        # This makes it a truly orphaned worktree with stale metadata
         (info.worktree_path / ".git").write_text(
-            f"gitdir: {repo / '.git'}\n", encoding="utf-8"
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
         )
 
         cleaned = cleanup_orphaned_worktrees(repo)
@@ -142,7 +146,7 @@ class TestGetChangedFiles:
         info = create_worktree(repo, "worker-1")
         changed = get_changed_files(info.worktree_path)
         assert changed == []
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_changed_files_detected(self, tmp_path: Path):
         repo = _init_git_repo(tmp_path / "repo")
@@ -158,7 +162,7 @@ class TestGetChangedFiles:
         # but the function should handle this gracefully
         assert isinstance(changed, list)
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_git_failure_raises_error(self, tmp_path: Path):
         """A failed Git inspection should raise RuntimeError, not return empty list."""
@@ -183,7 +187,7 @@ class TestGetChangedFiles:
             with pytest.raises(RuntimeError, match="Git inspection failed"):
                 wm_module.get_changed_files(info.worktree_path)
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_nonexistent_path_raises_error(self, tmp_path: Path):
         """get_changed_files on a nonexistent path should raise RuntimeError."""
@@ -207,7 +211,7 @@ class TestGetChangedFiles:
         changed = get_changed_files(info.worktree_path)
         assert "untracked.txt" in changed
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_modified_files_detected(self, tmp_path: Path):
         """Modified tracked files should be included in changed files."""
@@ -220,7 +224,7 @@ class TestGetChangedFiles:
         changed = get_changed_files(info.worktree_path)
         assert "README.md" in changed
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_deleted_files_detected(self, tmp_path: Path):
         """Deleted tracked files should be included in changed files."""
@@ -234,7 +238,7 @@ class TestGetChangedFiles:
         changed = get_changed_files(info.worktree_path)
         assert "README.md" in changed
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_staged_files_detected(self, tmp_path: Path):
         """Staged files should be included in changed files."""
@@ -248,7 +252,7 @@ class TestGetChangedFiles:
         changed = get_changed_files(info.worktree_path)
         assert "staged.py" in changed
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_files_with_spaces(self, tmp_path: Path):
         """Files with spaces in names should be handled correctly."""
@@ -261,7 +265,7 @@ class TestGetChangedFiles:
         changed = get_changed_files(info.worktree_path)
         assert "file with spaces.txt" in changed
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_base_commit_includes_committed_changes(self, tmp_path: Path):
         """Changes committed after base_commit should be included when base_commit is provided."""
@@ -284,7 +288,7 @@ class TestGetChangedFiles:
         changed_with_base = get_changed_files(info.worktree_path, base_commit=base_commit)
         assert "new_committed.py" in changed_with_base
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
 
 class TestGetWorkerDiff:
@@ -296,7 +300,7 @@ class TestGetWorkerDiff:
         diffs = get_worker_diff(info.worktree_path)
         assert diffs == []
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_diff_on_untracked_file(self, tmp_path: Path):
         """Untracked files should have diff content."""
@@ -311,7 +315,7 @@ class TestGetWorkerDiff:
         assert diffs[0].status == "U"
         assert "line1" in diffs[0].diff_content
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_diff_on_deleted_file(self, tmp_path: Path):
         """Deleted files should be reported with D status."""
@@ -326,7 +330,7 @@ class TestGetWorkerDiff:
         assert diffs[0].file_path == "README.md"
         assert diffs[0].status == "D"
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_diff_with_base_commit(self, tmp_path: Path):
         """Diff against base_commit should include committed changes."""
@@ -345,7 +349,7 @@ class TestGetWorkerDiff:
         assert len(diffs) == 1
         assert diffs[0].file_path == "committed.py"
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
 
 class TestGetChangeSummary:
@@ -357,7 +361,7 @@ class TestGetChangeSummary:
         summary = get_change_summary(info.worktree_path)
         assert "No changes" in summary
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_summary_counts_files(self, tmp_path: Path):
         """Summary should count modified and untracked files."""
@@ -373,7 +377,7 @@ class TestGetChangeSummary:
         assert "modified" in summary
         assert "untracked" in summary
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
 
 class TestRemoveWorktreeSafety:
@@ -405,7 +409,7 @@ class TestRemoveWorktreeSafety:
         # Unrelated dir should still exist
         assert unrelated_dir.exists()
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_remove_without_git_file_refused(self, tmp_path: Path):
         """Removing a Junie worktree path without .git file should raise RuntimeError."""
@@ -453,7 +457,7 @@ class TestCleanupOrphanedWorktreesSafety:
         assert info.worktree_path not in cleaned
         assert info.worktree_path.exists()
 
-        remove_worktree(info.worktree_path)
+        remove_worktree(info.worktree_path, force=True)
 
     def test_preserves_unowned_worktree(self, tmp_path: Path):
         """Worktrees belonging to a different repo should not be deleted."""
@@ -487,9 +491,9 @@ class TestCleanupOrphanedWorktreesSafety:
 
         # Recreate the directory to simulate an orphaned worktree
         info.worktree_path.mkdir(parents=True)
-        # Create a .git file pointing to the main repo
+        # Create a .git file pointing to the main repo's worktrees dir
         (info.worktree_path / ".git").write_text(
-            f"gitdir: {repo / '.git'}\n", encoding="utf-8"
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n", encoding="utf-8"
         )
 
         cleaned = cleanup_orphaned_worktrees(repo)
@@ -511,7 +515,7 @@ class TestCleanupOrphanedWorktreesSafety:
         """Ownership check should verify .git file points to the correct repo."""
         repo = _init_git_repo(tmp_path / "repo")
 
-        # Create a directory with .git pointing to this repo
+        # Create a directory with .git pointing to this repo's .git/worktrees/
         worktrees_dir = repo.parent / ".junie-worktrees"
         worktrees_dir.mkdir(parents=True, exist_ok=True)
         owned = worktrees_dir / "owned-worktree"
@@ -531,3 +535,312 @@ class TestCleanupOrphanedWorktreesSafety:
         no_git = worktrees_dir / "no-git"
         no_git.mkdir()
         assert _verify_worktree_ownership(no_git, repo) is False
+
+
+class TestRemoveWorktreeDirtyProtection:
+    """Tests for dirty worktree deletion protection."""
+
+    def test_refuses_dirty_worktree_with_modified_files(self, tmp_path: Path):
+        """remove_worktree should refuse to delete a worktree with modified files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Modify a tracked file
+        (info.worktree_path / "README.md").write_text("# Modified\n", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="uncommitted changes"):
+            remove_worktree(info.worktree_path)
+
+        # Worktree should still exist
+        assert info.worktree_path.exists()
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_refuses_dirty_worktree_with_untracked_files(self, tmp_path: Path):
+        """remove_worktree should refuse to delete a worktree with untracked files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create an untracked file
+        (info.worktree_path / "new_file.txt").write_text("new content\n", encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="uncommitted changes"):
+            remove_worktree(info.worktree_path)
+
+        assert info.worktree_path.exists()
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_refuses_dirty_worktree_with_staged_files(self, tmp_path: Path):
+        """remove_worktree should refuse to delete a worktree with staged files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Create and stage a file
+        (info.worktree_path / "staged.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "staged.py"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+
+        with pytest.raises(RuntimeError, match="uncommitted changes"):
+            remove_worktree(info.worktree_path)
+
+        assert info.worktree_path.exists()
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_allows_clean_worktree_removal(self, tmp_path: Path):
+        """remove_worktree should allow removing a clean worktree."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Worktree is clean — should succeed without force
+        result = remove_worktree(info.worktree_path)
+        assert result is True
+        assert not info.worktree_path.exists()
+
+    def test_force_allows_dirty_removal(self, tmp_path: Path):
+        """force=True should allow removing a dirty worktree."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        (info.worktree_path / "dirty.txt").write_text("data\n", encoding="utf-8")
+
+        result = remove_worktree(info.worktree_path, force=True)
+        assert result is True
+        assert not info.worktree_path.exists()
+
+    def test_is_worktree_dirty_clean(self, tmp_path: Path):
+        """_is_worktree_dirty should return False for a clean worktree."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+        assert _is_worktree_dirty(info.worktree_path) is False
+        remove_worktree(info.worktree_path)
+
+    def test_is_worktree_dirty_modified(self, tmp_path: Path):
+        """_is_worktree_dirty should return True for modified files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+        (info.worktree_path / "README.md").write_text("# Modified\n", encoding="utf-8")
+        assert _is_worktree_dirty(info.worktree_path) is True
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_is_worktree_dirty_untracked(self, tmp_path: Path):
+        """_is_worktree_dirty should return True for untracked files."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+        (info.worktree_path / "untracked.txt").write_text("data\n", encoding="utf-8")
+        assert _is_worktree_dirty(info.worktree_path) is True
+        remove_worktree(info.worktree_path, force=True)
+
+
+class TestOwnershipVerificationSafety:
+    """Tests for canonical path-based ownership verification."""
+
+    def test_forged_git_path_rejected(self, tmp_path: Path):
+        """A forged .git file pointing to a different repo must be rejected."""
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Forge a .git file pointing to a non-existent repo
+        forged = worktrees_dir / "forged-worktree"
+        forged.mkdir()
+        (forged / ".git").write_text(
+            "gitdir: /tmp/evil-repo/.git/worktrees/branch\n", encoding="utf-8"
+        )
+        assert _verify_worktree_ownership(forged, repo) is False
+
+    def test_repo_name_prefix_collision(self, tmp_path: Path):
+        """A path like /my-repo-backup/.git must not match /my-repo/.git."""
+        repo = _init_git_repo(tmp_path / "my-repo")
+        other_repo = _init_git_repo(tmp_path / "my-repo-backup")
+
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Point to the other repo's .git — substring match would incorrectly pass
+        collision = worktrees_dir / "collision-worktree"
+        collision.mkdir()
+        (collision / ".git").write_text(
+            f"gitdir: {other_repo / '.git' / 'worktrees' / 'branch'}\n",
+            encoding="utf-8",
+        )
+        assert _verify_worktree_ownership(collision, repo) is False
+        assert _verify_worktree_ownership(collision, other_repo) is True
+
+    def test_valid_worktree_ownership(self, tmp_path: Path):
+        """A real worktree's .git file should verify as owned."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # The real worktree should verify as owned
+        assert _verify_worktree_ownership(info.worktree_path, repo) is True
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_no_gitdir_prefix_rejected(self, tmp_path: Path):
+        """A .git file without gitdir: prefix should be rejected."""
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        bad = worktrees_dir / "bad-worktree"
+        bad.mkdir()
+        (bad / ".git").write_text(
+            f"{repo / '.git' / 'worktrees' / 'branch'}\n", encoding="utf-8"
+        )
+        assert _verify_worktree_ownership(bad, repo) is False
+
+
+class TestJunieWorktreePathValidation:
+    """Tests for _is_junie_worktree_path with git_root validation."""
+
+    def test_path_outside_expected_base_rejected(self, tmp_path: Path):
+        """A .junie-worktrees directory not under the expected repo must be rejected."""
+        # Use different parent directories so the .junie-worktrees dirs differ
+        repo = _init_git_repo(tmp_path / "project-a" / "repo")
+        other_repo = _init_git_repo(tmp_path / "project-b" / "other-repo")
+
+        # other-repo's .junie-worktrees should not be valid for repo
+        other_worktrees = other_repo.parent / ".junie-worktrees"
+        other_worktrees.mkdir(parents=True, exist_ok=True)
+        fake = other_worktrees / "fake-branch"
+        fake.mkdir()
+
+        assert _is_junie_worktree_path(fake, repo) is False
+        assert _is_junie_worktree_path(fake, other_repo) is True
+
+    def test_correct_base_accepted(self, tmp_path: Path):
+        """A path under the correct .junie-worktrees should be accepted."""
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+        valid = worktrees_dir / "valid-branch"
+        valid.mkdir()
+
+        assert _is_junie_worktree_path(valid, repo) is True
+
+    def test_non_junie_name_rejected(self, tmp_path: Path):
+        """A path not containing .junie-worktrees should be rejected."""
+        repo = _init_git_repo(tmp_path / "repo")
+        random_dir = tmp_path / "random-dir" / "subdir"
+        random_dir.mkdir(parents=True, exist_ok=True)
+
+        assert _is_junie_worktree_path(random_dir, repo) is False
+
+
+class TestCleanupOrphanedSafety:
+    """Tests for cleanup_orphaned_worktrees safety guarantees."""
+
+    def test_git_failure_aborts_cleanup(self, tmp_path: Path):
+        """If git worktree list fails, cleanup must abort with RuntimeError."""
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create an orphaned-looking worktree
+        orphan = worktrees_dir / "orphan-branch"
+        orphan.mkdir()
+        (orphan / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / 'orphan-branch'}\n",
+            encoding="utf-8",
+        )
+
+        import junie_adapter.worktree_manager as wm_module
+
+        original_run_git = wm_module._run_git
+
+        def failing_git(args, cwd=None):
+            if args[0] == "worktree" and args[1] == "list":
+                raise RuntimeError("Git worktree list failed")
+            return original_run_git(args, cwd=cwd)
+
+        with patch.object(wm_module, "_run_git", failing_git):
+            with pytest.raises(RuntimeError, match="aborting cleanup"):
+                wm_module.cleanup_orphaned_worktrees(repo)
+
+        # Orphan should NOT be deleted because cleanup aborted
+        assert orphan.exists()
+
+    def test_orphaned_dirty_worktree_preserved(self, tmp_path: Path):
+        """Worktrees with unreviewed changes must be preserved.
+
+        This tests the core safety guarantee: cleanup never deletes a worktree
+        containing uncommitted changes. A tracked worktree with dirty changes
+        is never deleted because it is tracked. An orphaned worktree with
+        valid gitdir metadata and dirty changes is also preserved.
+        """
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Make the worktree dirty — this is the key condition
+        (info.worktree_path / "important.py").write_text("critical code\n", encoding="utf-8")
+
+        # The worktree is tracked, so cleanup should skip it entirely
+        cleaned = cleanup_orphaned_worktrees(repo)
+        assert info.worktree_path not in cleaned
+        assert info.worktree_path.exists()
+        assert (info.worktree_path / "important.py").exists()
+
+        remove_worktree(info.worktree_path, force=True)
+
+    def test_symlink_escape_rejected(self, tmp_path: Path):
+        """A symlink pointing outside .junie-worktrees must not be followed."""
+        repo = _init_git_repo(tmp_path / "repo")
+        worktrees_dir = repo.parent / ".junie-worktrees"
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a target directory outside .junie-worktrees
+        target = tmp_path / "outside-target"
+        target.mkdir()
+        (target / "data.txt").write_text("should survive\n", encoding="utf-8")
+
+        # Create a symlink inside .junie-worktrees pointing to the target
+        try:
+            symlink = worktrees_dir / "symlink-escape"
+            symlink.symlink_to(target)
+
+            # The symlink should not be deleted
+            cleaned = cleanup_orphaned_worktrees(repo)
+            assert target.exists()
+            assert (target / "data.txt").read_text(encoding="utf-8") == "should survive\n"
+        except OSError:
+            # Symlinks may not be supported without admin rights on Windows
+            pytest.skip("Symlink creation not supported")
+
+    def test_cleanup_retry_after_partial_failure(self, tmp_path: Path):
+        """Cleanup should be safe to retry after a partial failure."""
+        repo = _init_git_repo(tmp_path / "repo")
+        info = create_worktree(repo, "worker-1")
+
+        # Remove Git tracking to simulate orphan
+        shutil.rmtree(info.worktree_path)
+        git_worktrees_dir = repo / ".git" / "worktrees" / info.branch_name
+        if git_worktrees_dir.exists():
+            shutil.rmtree(git_worktrees_dir)
+
+        # Recreate as clean orphan
+        info.worktree_path.mkdir(parents=True)
+        (info.worktree_path / ".git").write_text(
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
+        )
+
+        # First cleanup should succeed
+        cleaned1 = cleanup_orphaned_worktrees(repo)
+        assert info.worktree_path in cleaned1
+
+        # Second cleanup should be safe (nothing to clean)
+        cleaned2 = cleanup_orphaned_worktrees(repo)
+        assert cleaned2 == []
+
+    def test_base_dir_mismatch_rejected(self, tmp_path: Path):
+        """base_dir must match the expected .junie-worktrees for the repo."""
+        repo = _init_git_repo(tmp_path / "repo")
+
+        # Create a .junie-worktrees directory in a different location
+        fake_base = tmp_path / "fake" / ".junie-worktrees"
+        fake_base.mkdir(parents=True, exist_ok=True)
+
+        cleaned = cleanup_orphaned_worktrees(repo, base_dir=fake_base)
+        assert cleaned == []
