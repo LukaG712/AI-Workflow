@@ -236,6 +236,11 @@ def _is_junie_worktree_path(worktree_path: Path) -> bool:
 def remove_worktree(worktree_path: Path, branch_name: Optional[str] = None, project_path: Optional[Path] = None) -> bool:
     """Remove a Git worktree and its associated branch.
 
+    Resolves and validates paths before deleting anything. Restricts manual
+    directory deletion to confirmed Junie worktrees inside the designated
+    `.junie-worktrees` directory. Never deletes the main checkout or an
+    unrelated directory.
+
     Args:
         worktree_path: Path to the worktree directory.
         branch_name: Optional branch name to clean up after removing the worktree.
@@ -245,39 +250,126 @@ def remove_worktree(worktree_path: Path, branch_name: Optional[str] = None, proj
         True if the worktree was removed, False if it didn't exist.
 
     Raises:
-        RuntimeError: If Git commands fail.
+        RuntimeError: If Git commands fail or the path is not a safe Junie worktree.
     """
-    if not worktree_path.exists():
-        runs_logger.info(f"Worktree already removed: {worktree_path}")
+    resolved = worktree_path.resolve()
+
+    if not resolved.exists():
+        runs_logger.info(f"Worktree already removed: {resolved}")
         return False
+
+    # Safety check: never delete the main checkout
+    # A worktree's git root is the worktree itself, so we need to check
+    # whether this path is the actual main checkout vs a worktree.
+    # Worktrees live inside .junie-worktrees, so if the path is inside
+    # that directory, it's safe to proceed.
+    if not _is_junie_worktree_path(resolved):
+        try:
+            git_root = _get_git_root(resolved)
+            if resolved == git_root:
+                runs_logger.error(
+                    f"Refusing to delete what appears to be the main Git checkout: {resolved}"
+                )
+                raise RuntimeError(
+                    f"Refusing to delete main Git checkout: {resolved}. "
+                    "This is not a Junie worktree."
+                )
+        except RuntimeError as e:
+            # If the error is about main checkout, re-raise it
+            if "main Git checkout" in str(e):
+                raise
+            # Not a Git repo — proceed with caution
+            pass
 
     try:
         # Try to remove the worktree properly first
-        _run_git(["worktree", "remove", "--force", str(worktree_path)])
-        runs_logger.info(f"Removed worktree: {worktree_path}")
+        _run_git(["worktree", "remove", "--force", str(resolved)])
+        runs_logger.info(f"Removed worktree: {resolved}")
     except RuntimeError as e:
         runs_logger.warning(f"Failed to remove worktree via git: {e}")
-        # Fallback: only manually remove if it's a known Junie worktree directory
-        if _is_junie_worktree_path(worktree_path):
-            import shutil
-            try:
-                shutil.rmtree(worktree_path)
-                runs_logger.info(f"Manually removed worktree directory: {worktree_path}")
-            except Exception as cleanup_err:
-                runs_logger.error(f"Failed to manually remove worktree: {cleanup_err}")
-                raise RuntimeError(f"Failed to remove worktree: {worktree_path}") from cleanup_err
+        # Fallback: only manually remove if it's a confirmed Junie worktree
+        if _is_junie_worktree_path(resolved):
+            # Verify it looks like a worktree by checking for .git file
+            git_file = resolved / ".git"
+            if git_file.exists():
+                import shutil
+                try:
+                    shutil.rmtree(resolved)
+                    runs_logger.info(f"Manually removed worktree directory: {resolved}")
+                except Exception as cleanup_err:
+                    runs_logger.error(f"Failed to manually remove worktree: {cleanup_err}")
+                    raise RuntimeError(
+                        f"Failed to remove worktree: {resolved}"
+                    ) from cleanup_err
+            else:
+                runs_logger.error(
+                    f"Refusing to delete Junie worktree path without .git file: {resolved}. "
+                    "Manual cleanup required."
+                )
+                raise RuntimeError(
+                    f"Refusing to delete {resolved}: missing .git file. "
+                    "Manual cleanup required."
+                )
         else:
             runs_logger.error(
-                f"Refusing to delete non-Junie worktree directory: {worktree_path}. "
+                f"Refusing to delete non-Junie worktree directory: {resolved}. "
                 "Manual cleanup required."
             )
-            raise RuntimeError(f"Failed to remove worktree: {worktree_path}") from e
+            raise RuntimeError(f"Failed to remove worktree: {resolved}") from e
 
     # Clean up the associated branch
     if branch_name and project_path:
         cleanup_branch(branch_name, project_path)
 
     return True
+
+
+def _verify_worktree_ownership(item: Path, git_root: Path) -> bool:
+    """Verify that a directory is a worktree belonging to the given Git repo.
+
+    Checks that the `.git` file exists and points to the main repository's
+    `.git` directory. Does not rely solely on the presence of the string
+    `gitdir` in the file content.
+
+    Args:
+        item: Path to the potential worktree directory.
+        git_root: Path to the main Git repository root.
+
+    Returns:
+        True if the directory is confirmed as a worktree of the given repo.
+    """
+    git_file = item / ".git"
+    if not git_file.exists():
+        return False
+
+    try:
+        content = git_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        return False
+
+    # A worktree .git file contains either:
+    # 1. "gitdir: <path>" pointing to the main repo's .git/worktrees/<branch>
+    # 2. A direct path to the main repo's .git directory
+    # We verify ownership by checking the content references the main repo.
+    git_root_str = str(git_root)
+    git_dir_str = str(git_root / ".git")
+
+    # Normalize path separators for comparison
+    content_normalized = content.replace("\\", "/")
+    git_root_normalized = git_root_str.replace("\\", "/")
+    git_dir_normalized = git_dir_str.replace("\\", "/")
+
+    # Check if the .git file points to this repo's .git directory
+    if git_dir_normalized in content_normalized or git_root_normalized in content_normalized:
+        return True
+
+    # Also check for gitdir: prefix pointing to worktrees dir of this repo
+    if content_normalized.startswith("gitdir:"):
+        gitdir_path = content_normalized[len("gitdir:"):].strip()
+        if git_dir_normalized in gitdir_path or git_root_normalized in gitdir_path:
+            return True
+
+    return False
 
 
 def cleanup_orphaned_worktrees(
@@ -287,7 +379,9 @@ def cleanup_orphaned_worktrees(
     """Find and remove leftover worktrees from crashed runs.
 
     Scans for worktrees under the `.junie-worktrees` directory that are no
-    longer tracked by Git and removes them.
+    longer tracked by Git and removes them. Only deletes directories that
+    can be positively identified as Junie worktrees belonging to the given
+    repository. Never deletes the main checkout or unrelated directories.
 
     Args:
         project_path: Path to the Git repository.
@@ -301,11 +395,20 @@ def cleanup_orphaned_worktrees(
         runs_logger.warning(f"Cannot clean up worktrees: {project_path} is not a Git repo.")
         return []
 
-    git_root = _get_git_root(project_path)
+    git_root = _get_git_root(project_path).resolve()
     if base_dir is None:
         base_dir = git_root.parent / ".junie-worktrees"
 
+    base_dir = base_dir.resolve()
+
     if not base_dir.exists():
+        return []
+
+    # Safety: ensure base_dir is actually a .junie-worktrees directory
+    if ".junie-worktrees" not in base_dir.parts:
+        runs_logger.error(
+            f"Refusing to scan non-Junie directory for orphaned worktrees: {base_dir}"
+        )
         return []
 
     cleaned: List[Path] = []
@@ -324,26 +427,35 @@ def cleanup_orphaned_worktrees(
 
     # Find orphaned worktree directories
     for item in base_dir.iterdir():
-        if item.is_dir():
-            resolved = item.resolve()
-            if resolved not in tracked_paths:
-                try:
-                    # Check if it looks like a Junie worktree (has .git file pointing to main repo)
-                    git_file = item / ".git"
-                    if git_file.exists():
-                        content = git_file.read_text(encoding="utf-8").strip()
-                        if str(git_root) in content or "gitdir" in content:
-                            runs_logger.info(f"Cleaning orphaned worktree: {item}")
-                            import shutil
-                            shutil.rmtree(item)
-                            # Also try to remove any associated branch
-                            try:
-                                _run_git(["worktree", "prune"], cwd=project_path)
-                            except RuntimeError:
-                                pass
-                            cleaned.append(item)
-                except Exception as e:
-                    runs_logger.warning(f"Failed to clean orphaned worktree {item}: {e}")
+        if not item.is_dir():
+            continue
+
+        resolved = item.resolve()
+
+        # Never delete a tracked worktree
+        if resolved in tracked_paths:
+            continue
+
+        # Verify ownership before deletion
+        if not _verify_worktree_ownership(item, git_root):
+            runs_logger.info(
+                f"Skipping unowned directory during orphan cleanup: {item}"
+            )
+            continue
+
+        try:
+            runs_logger.info(f"Cleaning orphaned worktree: {item}")
+            import shutil
+            shutil.rmtree(item)
+            cleaned.append(item)
+        except Exception as e:
+            runs_logger.warning(f"Failed to clean orphaned worktree {item}: {e}")
+
+    # Prune Git's internal worktree tracking
+    try:
+        _run_git(["worktree", "prune"], cwd=project_path)
+    except RuntimeError:
+        pass
 
     return cleaned
 
@@ -358,48 +470,64 @@ def _split_git_output(output: str) -> List[str]:
     return [f for f in output.splitlines() if f.strip()]
 
 
-def get_changed_files(worktree_path: Path) -> List[str]:
+def get_changed_files(worktree_path: Path, base_commit: Optional[str] = None) -> List[str]:
     """Get the list of all changed files in a worktree.
 
     Reports modified, added, deleted, renamed, staged, unstaged, and untracked files.
+    Distinguishes a genuinely clean worktree from a failed Git inspection: if essential
+    Git commands fail, a RuntimeError is raised rather than returning an empty list.
 
     Args:
         worktree_path: Path to the worktree directory.
+        base_commit: Optional base commit SHA to diff against. When provided, compares
+            the worktree state against this commit instead of HEAD, so that files
+            committed by the worker after the base commit are included in changes.
 
     Returns:
         List of changed file paths relative to the worktree root.
 
     Raises:
-        RuntimeError: If Git commands fail.
+        RuntimeError: If the path is not a Git repo or essential Git commands fail.
     """
+    if not worktree_path.exists() or not worktree_path.is_dir():
+        raise RuntimeError(f"Worktree path does not exist: {worktree_path}")
+
+    if not validate_git_repo(worktree_path):
+        raise RuntimeError(f"Worktree path is not a Git repository: {worktree_path}")
+
     changed = set()
+    diff_ref = base_commit if base_commit else "HEAD"
+    essential_failed = False
 
+    # Modified tracked files (unstaged changes) — essential check
     try:
-        # Modified tracked files (unstaged changes)
-        output = _run_git(["diff", "--name-only", "HEAD"], cwd=worktree_path)
+        output = _run_git(["diff", "--name-only", diff_ref], cwd=worktree_path)
         changed.update(_split_git_output(output))
-    except RuntimeError:
-        pass
+    except RuntimeError as e:
+        runs_logger.error(f"Essential Git diff failed: {e}")
+        essential_failed = True
 
+    # Staged changes
     try:
-        # Staged changes
         output = _run_git(["diff", "--cached", "--name-only"], cwd=worktree_path)
         changed.update(_split_git_output(output))
-    except RuntimeError:
-        pass
+    except RuntimeError as e:
+        runs_logger.error(f"Staged diff failed: {e}")
+        essential_failed = True
 
+    # Untracked files
     try:
-        # Untracked files
         output = _run_git(
             ["ls-files", "--others", "--exclude-standard"], cwd=worktree_path
         )
         changed.update(_split_git_output(output))
-    except RuntimeError:
-        pass
+    except RuntimeError as e:
+        runs_logger.error(f"Untracked files check failed: {e}")
+        essential_failed = True
 
+    # Added/deleted/renamed files (from name-status)
     try:
-        # Added/deleted/renamed files (from name-status)
-        output = _run_git(["diff", "--name-status", "HEAD"], cwd=worktree_path)
+        output = _run_git(["diff", "--name-status", diff_ref], cwd=worktree_path)
         for line in output.splitlines():
             parts = line.split("\t")
             if len(parts) >= 2:
@@ -407,8 +535,16 @@ def get_changed_files(worktree_path: Path) -> List[str]:
             elif len(parts) == 1 and parts[0].strip():
                 # Some edge cases
                 changed.add(parts[0].strip())
-    except RuntimeError:
-        pass
+    except RuntimeError as e:
+        runs_logger.error(f"Name-status diff failed: {e}")
+        essential_failed = True
+
+    if essential_failed:
+        raise RuntimeError(
+            f"Git inspection failed for worktree {worktree_path}. "
+            "One or more essential Git commands could not complete. "
+            "The worktree may be corrupted or Git may be unavailable."
+        )
 
     return sorted(changed)
 
@@ -427,21 +563,29 @@ def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> L
 
     Args:
         worktree_path: Path to the worktree directory.
-        base_commit: Optional base commit SHA to diff against. Defaults to HEAD.
+        base_commit: Optional base commit SHA to diff against. When provided, compares
+            the worktree state against this commit instead of HEAD, so that files
+            committed by the worker after the base commit are included.
 
     Returns:
         List of FileDiff objects with file path, status, diff content, and summary.
+
+    Raises:
+        RuntimeError: If Git commands fail to inspect the worktree.
     """
     diffs = []
-    changed_files = get_changed_files(worktree_path)
+    changed_files = get_changed_files(worktree_path, base_commit=base_commit)
+
+    diff_ref = base_commit if base_commit else "HEAD"
 
     for file_path in changed_files:
         try:
             # Determine status
             status = "M"  # default
+            is_untracked_file = False
             try:
                 name_status_output = _run_git(
-                    ["diff", "--name-status", "HEAD", "--", file_path],
+                    ["diff", "--name-status", diff_ref, "--", file_path],
                     cwd=worktree_path,
                 )
                 if name_status_output:
@@ -449,28 +593,56 @@ def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> L
                     if parts:
                         status = parts[0].strip()
             except RuntimeError:
+                # File may be untracked — no diff against HEAD/base_commit
                 pass
+
+            # Check if the file is untracked by seeing if it's in the index
+            file_full_path = worktree_path / file_path
+            if file_full_path.exists():
+                try:
+                    # Check if the file is tracked (in the index)
+                    _run_git(["ls-files", "--error-unmatch", file_path], cwd=worktree_path)
+                    # File is tracked — status from diff is correct
+                except RuntimeError:
+                    # File is not in the index — it's untracked
+                    is_untracked_file = True
+                    status = "U"
 
             # Get diff content
             diff_content = ""
-            try:
-                diff_content = _run_git(
-                    ["diff", "HEAD", "--", file_path],
-                    cwd=worktree_path,
-                )
-            except RuntimeError:
-                # File might be untracked - show content
+            if is_untracked_file and file_full_path.exists():
+                # Untracked file — show content as diff (skip git diff which returns empty)
+                try:
+                    content = file_full_path.read_text(encoding="utf-8", errors="replace")
+                    # Format as a unified diff against empty
+                    lines = content.split("\n")
+                    diff_lines = [f"+++ b/{file_path}"]
+                    for line in lines:
+                        diff_lines.append(f"+{line}")
+                    diff_content = "\n".join(diff_lines)
+                except Exception:
+                    diff_content = "(could not read file content)"
+            else:
                 try:
                     diff_content = _run_git(
-                        ["diff", "--no-index", "/dev/null", file_path],
+                        ["diff", diff_ref, "--", file_path],
                         cwd=worktree_path,
                     )
+                    # If diff is empty and file doesn't exist, it was deleted
+                    if not diff_content and not file_full_path.exists():
+                        if status != "D":
+                            status = "D"
+                        diff_content = f"(deleted: {file_path})"
                 except RuntimeError:
-                    diff_content = "(diff unavailable)"
+                    # File might be deleted
+                    if not file_full_path.exists():
+                        if status != "D":
+                            status = "D"
+                        diff_content = f"(deleted: {file_path})"
 
             # Create a short summary
             summary = f"{status}: {file_path}"
-            if diff_content:
+            if diff_content and not diff_content.startswith("("):
                 lines = diff_content.strip().split("\n")
                 added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
                 removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
@@ -494,18 +666,25 @@ def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> L
     return diffs
 
 
-def get_change_summary(worktree_path: Path) -> str:
+def get_change_summary(worktree_path: Path, base_commit: Optional[str] = None) -> str:
     """Get a human-readable summary of changes in a worktree.
 
     Args:
         worktree_path: Path to the worktree directory.
+        base_commit: Optional base commit SHA to diff against. When provided, compares
+            the worktree state against this commit instead of HEAD.
 
     Returns:
         Human-readable summary string suitable for AgentHub reporting.
+
+    Raises:
+        RuntimeError: If Git commands fail to inspect the worktree.
     """
-    changed_files = get_changed_files(worktree_path)
+    changed_files = get_changed_files(worktree_path, base_commit=base_commit)
     if not changed_files:
         return "No changes detected."
+
+    diff_ref = base_commit if base_commit else "HEAD"
 
     # Count by status
     modified = 0
@@ -517,7 +696,7 @@ def get_change_summary(worktree_path: Path) -> str:
     for file_path in changed_files:
         try:
             status_output = _run_git(
-                ["diff", "--name-status", "HEAD", "--", file_path],
+                ["diff", "--name-status", diff_ref, "--", file_path],
                 cwd=worktree_path,
             )
             if status_output:
@@ -534,6 +713,7 @@ def get_change_summary(worktree_path: Path) -> str:
                 # No diff against HEAD means it's untracked
                 untracked += 1
         except RuntimeError:
+            # No diff output means untracked
             untracked += 1
 
     parts = []
