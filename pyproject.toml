@@ -34,6 +34,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py310"
+exclude = [".junie", ".git", "__pycache__", "*.md"]
 
 [tool.ruff.lint]
 # Broad Exception catches are intentional in an orchestration system where
