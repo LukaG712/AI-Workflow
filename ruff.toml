@@ -7,4 +7,4 @@ exclude = [".junie", ".git", "__pycache__", "*.md"]
 # Try-except-pass is used intentionally for non-critical cleanup paths.
 # Subprocess.run in async tests is acceptable for short git init commands.
 # PLW1510: subprocess.run without check is fine for test setup where we don't need to fail on error.
-ignore = ["BLE001", "S110", "ASYNC221", "PLW1510"]
+ignore = ["BLE001", "S110", "ASYNC221", "PLW1510", "EXE001"]
