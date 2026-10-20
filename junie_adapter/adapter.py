@@ -4,23 +4,20 @@ Provides a clean, documented API for submitting tasks to JunieOrchestrator
 without importing private implementation details.
 """
 
-import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from .config import IsolationMode, OrchestratorConfig
 from .models import WorkerStatus
 from .persistent_store import PersistentStore
 from .worktree_manager import (
     FileDiff,
-    get_changed_files,
     get_change_summary,
+    get_changed_files,
     get_worker_diff,
     remove_worktree,
-    validate_git_repo,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,15 +38,16 @@ class AdapterRequest:
         isolation_mode: Worktree isolation mode. Defaults to WORKTREE.
         config_overrides: Optional config overrides (API key, Junie binary, etc.).
     """
+
     task: str
     project_path: str
-    worker_id: Optional[str] = None
-    task_id: Optional[str] = None
-    parent_task_id: Optional[str] = None
+    worker_id: str | None = None
+    task_id: str | None = None
+    parent_task_id: str | None = None
     use_worktree: bool = True
     timeout: int = 1800
     isolation_mode: IsolationMode = IsolationMode.WORKTREE
-    config_overrides: Optional[Dict[str, object]] = None
+    config_overrides: dict[str, object] | None = None
 
     def __post_init__(self):
         if self.worker_id is None:
@@ -75,16 +73,17 @@ class AdapterResult:
         branch_name: Git branch name (if worktree was created).
         duration_seconds: Execution duration in seconds.
     """
+
     worker_id: str
     task_id: str
     status: WorkerStatus
     output: str
-    exit_code: Optional[int]
-    changed_files: List[str]
+    exit_code: int | None
+    changed_files: list[str]
     diff_summary: str
-    error: Optional[str]
-    worktree_path: Optional[str]
-    branch_name: Optional[str]
+    error: str | None
+    worktree_path: str | None
+    branch_name: str | None
     duration_seconds: float = 0.0
 
 
@@ -122,8 +121,8 @@ class JunieAdapter:
 
     def __init__(
         self,
-        config: Optional[OrchestratorConfig] = None,
-        store: Optional[PersistentStore] = None,
+        config: OrchestratorConfig | None = None,
+        store: PersistentStore | None = None,
         **config_kwargs,
     ):
         """Initialize the adapter with configuration.
@@ -150,7 +149,9 @@ class JunieAdapter:
         """
         try:
             if not self._config.workspace_dir.exists():
-                logger.warning(f"Workspace does not exist: {self._config.workspace_dir}")
+                logger.warning(
+                    f"Workspace does not exist: {self._config.workspace_dir}"
+                )
                 return False
             return True
         except Exception as e:
@@ -170,7 +171,6 @@ class JunieAdapter:
             AdapterResult with execution status, output, and changed files.
         """
         import time
-        from datetime import datetime
 
         start_time = time.time()
 
@@ -240,7 +240,7 @@ class JunieAdapter:
                 duration_seconds=duration,
             )
 
-    async def get_changed_files(self, worktree_path: str) -> List[str]:
+    async def get_changed_files(self, worktree_path: str) -> list[str]:
         """Get the list of changed files in a worktree.
 
         Args:
@@ -255,7 +255,7 @@ class JunieAdapter:
             logger.error(f"Failed to get changed files: {e}")
             return []
 
-    async def get_diff(self, worktree_path: str) -> List[FileDiff]:
+    async def get_diff(self, worktree_path: str) -> list[FileDiff]:
         """Get structured diff data for a worktree.
 
         Args:

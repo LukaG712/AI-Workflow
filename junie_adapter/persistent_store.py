@@ -10,8 +10,6 @@ import sqlite3
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +20,7 @@ SCHEMA_VERSION = 1
 @dataclass
 class ProjectRecord:
     """Stored project configuration."""
+
     id: str
     name: str
     path: str
@@ -32,23 +31,24 @@ class ProjectRecord:
 @dataclass
 class TaskRecord:
     """Stored task execution record."""
+
     id: str
-    project_id: Optional[str]
+    project_id: str | None
     worker_id: str
-    parent_task_id: Optional[str]
+    parent_task_id: str | None
     task_description: str
     project_path: str
-    worktree_path: Optional[str]
+    worktree_path: str | None
     status: str
-    exit_code: Optional[int]
+    exit_code: int | None
     stdout: str
     stderr: str
-    result_summary: Optional[str]
+    result_summary: str | None
     changed_files: str  # JSON-encoded list
-    error: Optional[str]
+    error: str | None
     duration_seconds: float
     start_time: datetime
-    end_time: Optional[datetime]
+    end_time: datetime | None
 
 
 class PersistentStore:
@@ -168,11 +168,21 @@ class PersistentStore:
 
         # Indexes for common queries
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_worker_id ON tasks(worker_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_task_id ON sessions(task_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_workers_task_id ON workers(task_id)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_worker_id ON tasks(worker_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_task_id ON sessions(task_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workers_task_id ON workers(task_id)"
+        )
 
     def upsert_project(self, project_id: str, name: str, path: str) -> ProjectRecord:
         """Insert or update a project record.
@@ -187,17 +197,20 @@ class PersistentStore:
         """
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO projects (id, name, path) VALUES (?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 path = excluded.path,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%S', 'now')
-        """, (project_id, name, path))
+        """,
+            (project_id, name, path),
+        )
         conn.commit()
         return ProjectRecord(id=project_id, name=name, path=path)
 
-    def get_project(self, project_id: str) -> Optional[ProjectRecord]:
+    def get_project(self, project_id: str) -> ProjectRecord | None:
         """Get a project by ID.
 
         Args:
@@ -220,7 +233,7 @@ class PersistentStore:
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
-    def list_projects(self) -> List[ProjectRecord]:
+    def list_projects(self) -> list[ProjectRecord]:
         """List all registered projects.
 
         Returns:
@@ -250,9 +263,11 @@ class PersistentStore:
             The saved TaskRecord.
         """
         import json
+
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO tasks (
                 id, project_id, worker_id, parent_task_id, task_description,
                 project_path, worktree_path, status, exit_code, stdout, stderr,
@@ -269,19 +284,33 @@ class PersistentStore:
                 error = excluded.error,
                 duration_seconds = excluded.duration_seconds,
                 end_time = excluded.end_time
-        """, (
-            task.id, task.project_id, task.worker_id, task.parent_task_id,
-            task.task_description, task.project_path, task.worktree_path,
-            task.status, task.exit_code, task.stdout, task.stderr,
-            task.result_summary, json.dumps(task.changed_files) if isinstance(task.changed_files, list) else task.changed_files,
-            task.error, task.duration_seconds,
-            task.start_time.isoformat(),
-            task.end_time.isoformat() if task.end_time else None,
-        ))
+        """,
+            (
+                task.id,
+                task.project_id,
+                task.worker_id,
+                task.parent_task_id,
+                task.task_description,
+                task.project_path,
+                task.worktree_path,
+                task.status,
+                task.exit_code,
+                task.stdout,
+                task.stderr,
+                task.result_summary,
+                json.dumps(task.changed_files)
+                if isinstance(task.changed_files, list)
+                else task.changed_files,
+                task.error,
+                task.duration_seconds,
+                task.start_time.isoformat(),
+                task.end_time.isoformat() if task.end_time else None,
+            ),
+        )
         conn.commit()
         return task
 
-    def get_task(self, task_id: str) -> Optional[TaskRecord]:
+    def get_task(self, task_id: str) -> TaskRecord | None:
         """Get a task by ID.
 
         Args:
@@ -291,6 +320,7 @@ class PersistentStore:
             TaskRecord if found, None otherwise.
         """
         import json
+
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -310,20 +340,24 @@ class PersistentStore:
             stdout=row["stdout"] or "",
             stderr=row["stderr"] or "",
             result_summary=row["result_summary"],
-            changed_files=json.loads(row["changed_files"]) if row["changed_files"] else [],
+            changed_files=json.loads(row["changed_files"])
+            if row["changed_files"]
+            else [],
             error=row["error"],
             duration_seconds=row["duration_seconds"] or 0.0,
             start_time=datetime.fromisoformat(row["start_time"]),
-            end_time=datetime.fromisoformat(row["end_time"]) if row["end_time"] else None,
+            end_time=datetime.fromisoformat(row["end_time"])
+            if row["end_time"]
+            else None,
         )
 
     def list_tasks(
         self,
-        project_id: Optional[str] = None,
-        status: Optional[str] = None,
+        project_id: str | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[TaskRecord]:
+    ) -> list[TaskRecord]:
         """List tasks with optional filtering.
 
         Args:
@@ -336,10 +370,11 @@ class PersistentStore:
             List of TaskRecord objects.
         """
         import json
+
         conn = self._get_connection()
         cursor = conn.cursor()
         query = "SELECT * FROM tasks WHERE 1=1"
-        params: List = []
+        params: list = []
 
         if project_id:
             query += " AND project_id = ?"
@@ -366,11 +401,15 @@ class PersistentStore:
                 stdout=row["stdout"] or "",
                 stderr=row["stderr"] or "",
                 result_summary=row["result_summary"],
-                changed_files=json.loads(row["changed_files"]) if row["changed_files"] else [],
+                changed_files=json.loads(row["changed_files"])
+                if row["changed_files"]
+                else [],
                 error=row["error"],
                 duration_seconds=row["duration_seconds"] or 0.0,
                 start_time=datetime.fromisoformat(row["start_time"]),
-                end_time=datetime.fromisoformat(row["end_time"]) if row["end_time"] else None,
+                end_time=datetime.fromisoformat(row["end_time"])
+                if row["end_time"]
+                else None,
             )
             for row in cursor.fetchall()
         ]
@@ -378,12 +417,12 @@ class PersistentStore:
     def save_session(
         self,
         session_id: str,
-        task_id: Optional[str],
+        task_id: str | None,
         raw_prompt: str,
-        refined_prompt: Optional[str],
+        refined_prompt: str | None,
         answer: str,
         status: str,
-        error: Optional[str] = None,
+        error: str | None = None,
     ) -> str:
         """Save a session log record.
 
@@ -401,19 +440,22 @@ class PersistentStore:
         """
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO sessions (
                 id, task_id, raw_prompt, refined_prompt, answer, status, error
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (session_id, task_id, raw_prompt, refined_prompt, answer, status, error))
+        """,
+            (session_id, task_id, raw_prompt, refined_prompt, answer, status, error),
+        )
         conn.commit()
         return session_id
 
     def list_sessions(
         self,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
         limit: int = 20,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """List session records.
 
         Args:
@@ -426,7 +468,7 @@ class PersistentStore:
         conn = self._get_connection()
         cursor = conn.cursor()
         query = "SELECT * FROM sessions WHERE 1=1"
-        params: List = []
+        params: list = []
 
         if task_id:
             query += " AND task_id = ?"
@@ -438,7 +480,9 @@ class PersistentStore:
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
 
-    def update_task_status(self, task_id: str, status: str, error: Optional[str] = None) -> bool:
+    def update_task_status(
+        self, task_id: str, status: str, error: str | None = None
+    ) -> bool:
         """Update a task's status.
 
         Args:

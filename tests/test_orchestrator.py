@@ -11,11 +11,11 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
-import httpx
 
 # ─── Config tests ─────────────────────────────────────────────────────────────
 
@@ -26,6 +26,7 @@ class TestConfig:
         # Clear all relevant env vars
         with patch.dict(os.environ, {}, clear=True):
             from junie_adapter.config import OrchestratorConfig
+
             config = OrchestratorConfig.from_env()
             assert config.ollama_url == "http://localhost:11434"
             assert config.ollama_model == "gemma4:12b"
@@ -54,6 +55,7 @@ class TestConfig:
         }
         with patch.dict(os.environ, env, clear=True):
             from junie_adapter.config import OrchestratorConfig
+
             config = OrchestratorConfig.from_env()
             assert config.ollama_url == "http://custom:11435"
             assert config.ollama_model == "llama3:8b"
@@ -69,6 +71,7 @@ class TestConfig:
     def test_validate_requires_api_key(self):
         """Test that validation raises when API_KEY is required but missing."""
         from junie_adapter.config import OrchestratorConfig
+
         config = OrchestratorConfig(api_key="")
         with pytest.raises(RuntimeError, match="API_KEY"):
             config.validate(require_api_key=True)
@@ -76,24 +79,28 @@ class TestConfig:
     def test_validate_skips_api_key(self):
         """Test that validation passes when API_KEY is not required."""
         from junie_adapter.config import OrchestratorConfig
+
         config = OrchestratorConfig(api_key="")
         config.validate(require_api_key=False)  # Should not raise
 
     def test_workspace_dir_fallback(self):
         """Test workspace_dir falls back to temp directory."""
         from junie_adapter.config import OrchestratorConfig
+
         config = OrchestratorConfig(workspace_path=None)
         assert "junie_workspace" in str(config.workspace_dir)
 
     def test_workspace_dir_custom(self):
         """Test workspace_dir uses custom path."""
         from junie_adapter.config import OrchestratorConfig
+
         config = OrchestratorConfig(workspace_path="/custom/path")
         assert config.workspace_dir == Path("/custom/path")
 
     def test_memory_file_path(self):
         """Test memory_file property."""
         from junie_adapter.config import OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             assert config.memory_file == Path(tmp) / "MEMORY.md"
@@ -101,6 +108,7 @@ class TestConfig:
     def test_session_logs_dir_path(self):
         """Test session_logs_dir property."""
         from junie_adapter.config import OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             assert config.session_logs_dir == Path(tmp) / "session-logs"
@@ -113,6 +121,7 @@ class TestModels:
     def test_run_result(self):
         """Test RunResult dataclass."""
         from junie_adapter.models import RunResult, TaskStatus
+
         result = RunResult(
             task="test task",
             answer="test answer",
@@ -127,6 +136,7 @@ class TestModels:
     def test_session_log(self):
         """Test SessionLog dataclass."""
         from junie_adapter.models import SessionLog, TaskStatus
+
         log = SessionLog(
             raw_prompt="test prompt",
             refined_prompt="refined prompt",
@@ -139,6 +149,7 @@ class TestModels:
     def test_task_status_enum(self):
         """Test TaskStatus enum values."""
         from junie_adapter.models import TaskStatus
+
         assert TaskStatus.COMPLETED.value == "completed"
         assert TaskStatus.FAILED.value == "failed"
         assert TaskStatus.TIMED_OUT.value == "timed_out"
@@ -152,30 +163,35 @@ class TestJunieRunner:
     def test_parse_junie_json_simple(self):
         """Test parsing simple JSON output."""
         from junie_adapter.junie_runner import parse_junie_json
+
         output = json.dumps({"answer": "Hello world"})
         assert parse_junie_json(output) == "Hello world"
 
     def test_parse_junie_json_nested(self):
         """Test parsing nested JSON output."""
         from junie_adapter.junie_runner import parse_junie_json
+
         output = json.dumps({"result": {"content": "Nested answer"}})
         assert parse_junie_json(output) == "Nested answer"
 
     def test_parse_junie_json_non_json(self):
         """Test parsing non-JSON output."""
         from junie_adapter.junie_runner import parse_junie_json
+
         assert parse_junie_json("Plain text output") == "Plain text output"
 
     def test_parse_junie_json_empty(self):
         """Test parsing empty output."""
         from junie_adapter.junie_runner import parse_junie_json
+
         assert parse_junie_json("") == ""
 
     def test_has_rate_limit(self):
         """Test rate limit detection."""
         from junie_adapter.junie_runner import has_rate_limit
+
         assert has_rate_limit('{"error": "429 Too Many Requests"}') is True
-        assert has_rate_limit('RESOURCE_EXHAUSTED') is True
+        assert has_rate_limit("RESOURCE_EXHAUSTED") is True
         assert has_rate_limit('{"answer": "normal output"}') is False
 
     @pytest.mark.asyncio
@@ -221,15 +237,21 @@ class TestPromptRefiner:
     def test_build_prompt_system(self):
         """Test building system prompt with context."""
         from junie_adapter.prompt_refiner import build_prompt_system
-        system = build_prompt_system(context="Some context", vault_map_content="Some map")
+
+        system = build_prompt_system(
+            context="Some context", vault_map_content="Some map"
+        )
         assert "Some context" in system
         assert "Some map" in system
 
     def test_build_prompt_system_empty(self):
         """Test building system prompt without context."""
         from junie_adapter.prompt_refiner import build_prompt_system
+
         system = build_prompt_system()
-        assert "PROMPT_REWRITE_SYSTEM_BASE" not in system  # The actual text, not the variable name
+        assert (
+            "PROMPT_REWRITE_SYSTEM_BASE" not in system
+        )  # The actual text, not the variable name
         assert "You rewrite rough requests" in system
 
     @pytest.mark.asyncio
@@ -253,6 +275,7 @@ class TestPromptRefiner:
     async def test_refine_prompt_with_mock_ollama(self):
         """Test refinement with mocked Ollama response."""
         import respx
+
         from junie_adapter.config import OrchestratorConfig
         from junie_adapter.prompt_refiner import refine_prompt
 
@@ -262,9 +285,9 @@ class TestPromptRefiner:
         )
         with respx.mock:
             respx.post("http://localhost:11434/api/chat").mock(
-                return_value=httpx.Response(200, json={
-                    "message": {"content": "Refined prompt text"}
-                })
+                return_value=httpx.Response(
+                    200, json={"message": {"content": "Refined prompt text"}}
+                )
             )
             result = await refine_prompt("raw prompt", config)
             improved, fallback, error = result
@@ -429,7 +452,6 @@ class TestService:
     @pytest.fixture
     def client(self):
         """Create a test client with mocked config."""
-        import sys
         # Remove cached modules
         for mod in list(sys.modules.keys()):
             if mod.startswith("junie_adapter"):
@@ -444,6 +466,7 @@ class TestService:
         }
         with patch.dict(os.environ, env, clear=True):
             from junie_adapter.service import app
+
             # Reset the lock
             app.state.junie_lock = asyncio.Lock()
             with TestClient(app) as c:
@@ -456,7 +479,9 @@ class TestService:
 
     def test_list_models(self, client):
         """Test listing available models."""
-        response = client.get("/v1/models", headers={"Authorization": "Bearer test-key"})
+        response = client.get(
+            "/v1/models", headers={"Authorization": "Bearer test-key"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["object"] == "list"
@@ -533,7 +558,6 @@ class TestService:
 class TestIntegration:
     def test_full_pipeline_no_refinement(self):
         """Test full pipeline with refinement disabled."""
-        import sys
         for mod in list(sys.modules.keys()):
             if mod.startswith("junie_adapter"):
                 del sys.modules[mod]
@@ -548,13 +572,16 @@ class TestIntegration:
             }
             with patch.dict(os.environ, env, clear=True):
                 from junie_adapter.service import app
+
                 app.state.junie_lock = asyncio.Lock()
                 with TestClient(app) as client:
                     response = client.post(
                         "/v1/chat/completions",
                         headers={"Authorization": "Bearer test-key"},
                         json={
-                            "messages": [{"role": "user", "content": "Integration test"}],
+                            "messages": [
+                                {"role": "user", "content": "Integration test"}
+                            ],
                             "stream": False,
                         },
                     )
@@ -575,6 +602,7 @@ class TestIntegration:
             }
             with patch.dict(os.environ, env, clear=True):
                 from junie_adapter.config import OrchestratorConfig
+
                 config = OrchestratorConfig.from_env()
                 assert config.vault_path is None
                 assert config.mirror_logs_to_vault is False
@@ -604,12 +632,14 @@ class TestContextProvider:
     def test_empty_context_provider(self):
         """Test EmptyContextProvider returns empty string."""
         from junie_adapter import EmptyContextProvider
+
         provider = EmptyContextProvider()
         assert provider.load_context() == ""
 
     def test_memory_file_context_provider_no_files(self):
         """Test MemoryFileContextProvider with no memory files."""
         from junie_adapter import MemoryFileContextProvider, OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             provider = MemoryFileContextProvider(config)
@@ -619,6 +649,7 @@ class TestContextProvider:
     def test_memory_file_context_provider_with_memory(self):
         """Test MemoryFileContextProvider loads MEMORY.md."""
         from junie_adapter import MemoryFileContextProvider, OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             memory_file = Path(tmp) / "MEMORY.md"
@@ -631,12 +662,15 @@ class TestContextProvider:
     def test_memory_file_context_provider_with_session_logs(self):
         """Test MemoryFileContextProvider loads session logs."""
         from junie_adapter import MemoryFileContextProvider, OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             logs_dir = Path(tmp) / "session-logs"
             logs_dir.mkdir()
             log_file = logs_dir / "session-20240101-120000.md"
-            log_file.write_text("# Session 1\n\nTest session log content", encoding="utf-8")
+            log_file.write_text(
+                "# Session 1\n\nTest session log content", encoding="utf-8"
+            )
             provider = MemoryFileContextProvider(config)
             context = provider.load_context()
             assert "# Session 1" in context
@@ -645,12 +679,14 @@ class TestContextProvider:
     def test_vault_map_context_provider_missing(self):
         """Test VaultMapContextProvider returns empty when not configured."""
         from junie_adapter import VaultMapContextProvider
+
         provider = VaultMapContextProvider()
         assert provider.load_context() == ""
 
     def test_vault_map_context_provider_with_config(self):
         """Test VaultMapContextProvider loads vault map."""
-        from junie_adapter import VaultMapContextProvider, OrchestratorConfig
+        from junie_adapter import OrchestratorConfig, VaultMapContextProvider
+
         with tempfile.TemporaryDirectory() as tmp:
             map_file = Path(tmp) / "vault_map.md"
             map_file.write_text("Vault map content", encoding="utf-8")
@@ -665,9 +701,10 @@ class TestContextProvider:
         from junie_adapter import (
             CompositeContextProvider,
             MemoryFileContextProvider,
-            VaultMapContextProvider,
             OrchestratorConfig,
+            VaultMapContextProvider,
         )
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             memory_file = Path(tmp) / "MEMORY.md"
@@ -676,17 +713,20 @@ class TestContextProvider:
             map_file.write_text("Map content", encoding="utf-8")
             config.vault_map_path = str(map_file)
 
-            provider = CompositeContextProvider([
-                MemoryFileContextProvider(config),
-                VaultMapContextProvider(config=config),
-            ])
+            provider = CompositeContextProvider(
+                [
+                    MemoryFileContextProvider(config),
+                    VaultMapContextProvider(config=config),
+                ]
+            )
             context = provider.load_context()
             assert "Memory content" in context
             assert "Map content" in context
 
     def test_create_default_context_provider_with_memory(self):
         """Test factory creates provider with memory."""
-        from junie_adapter import create_default_context_provider, OrchestratorConfig
+        from junie_adapter import OrchestratorConfig, create_default_context_provider
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             provider = create_default_context_provider(config, include_memory=True)
@@ -695,10 +735,11 @@ class TestContextProvider:
     def test_create_default_context_provider_empty(self):
         """Test factory returns EmptyContextProvider when nothing included."""
         from junie_adapter import (
-            create_default_context_provider,
             EmptyContextProvider,
             OrchestratorConfig,
+            create_default_context_provider,
         )
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             provider = create_default_context_provider(
@@ -710,6 +751,7 @@ class TestContextProvider:
         """Test that load_context delegates to ContextProvider."""
         from junie_adapter import OrchestratorConfig
         from junie_adapter.memory_loader import load_context
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             memory_file = Path(tmp) / "MEMORY.md"
@@ -727,6 +769,7 @@ class TestIsolationMode:
     def test_isolation_mode_enum_values(self):
         """Test IsolationMode enum values."""
         from junie_adapter import IsolationMode
+
         assert IsolationMode.WORKTREE.value == "worktree"
         assert IsolationMode.NONE.value == "none"
         assert IsolationMode.REQUIRED.value == "required"
@@ -734,18 +777,22 @@ class TestIsolationMode:
     def test_isolation_mode_from_env(self):
         """Test loading isolation mode from environment."""
         from junie_adapter import IsolationMode
+
         env = {"ISOLATION_MODE": "required"}
         with patch.dict(os.environ, env, clear=True):
             from junie_adapter.config import OrchestratorConfig
+
             config = OrchestratorConfig.from_env()
             assert config.isolation_mode == IsolationMode.REQUIRED
 
     def test_isolation_mode_invalid_fallback(self):
         """Test invalid isolation mode falls back to WORKTREE."""
         from junie_adapter import IsolationMode
+
         env = {"ISOLATION_MODE": "invalid_mode"}
         with patch.dict(os.environ, env, clear=True):
             from junie_adapter.config import OrchestratorConfig
+
             config = OrchestratorConfig.from_env()
             assert config.isolation_mode == IsolationMode.WORKTREE
 
@@ -753,6 +800,7 @@ class TestIsolationMode:
         """Test default isolation mode is WORKTREE."""
         from junie_adapter import IsolationMode
         from junie_adapter.config import OrchestratorConfig
+
         config = OrchestratorConfig()
         assert config.isolation_mode == IsolationMode.WORKTREE
 
@@ -766,6 +814,7 @@ class TestValidateWorkspace:
     def test_validate_workspace_valid(self):
         """Test validation passes for valid workspace."""
         from junie_adapter import OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             config = OrchestratorConfig(workspace_path=tmp)
             config.validate_workspace()  # Should not raise
@@ -773,6 +822,7 @@ class TestValidateWorkspace:
     def test_validate_workspace_not_exists(self):
         """Test validation raises for non-existent workspace."""
         from junie_adapter import OrchestratorConfig
+
         config = OrchestratorConfig(workspace_path="/nonexistent/path")
         with pytest.raises(RuntimeError, match="does not exist"):
             config.validate_workspace()
@@ -780,12 +830,14 @@ class TestValidateWorkspace:
     def test_validate_workspace_not_writable(self):
         """Test validation raises for non-writable workspace."""
         from junie_adapter import OrchestratorConfig
+
         with tempfile.TemporaryDirectory() as tmp:
             try:
                 os.chmod(tmp, 0o000)
                 config = OrchestratorConfig(workspace_path=tmp)
                 # On Windows, admin users can still access 0o000 dirs, so skip
                 import platform
+
                 if platform.system() != "Windows":
                     with pytest.raises(RuntimeError, match="not writable"):
                         config.validate_workspace()
@@ -846,9 +898,10 @@ class TestWorkerRegistry:
     @pytest.mark.asyncio
     async def test_register_and_get(self):
         """Test registering and retrieving a worker."""
-        from junie_adapter import WorkerRegistry, WorkerExecution
-        from junie_adapter.models import WorkerStatus
         from datetime import datetime
+
+        from junie_adapter import WorkerExecution, WorkerRegistry
+        from junie_adapter.models import WorkerStatus
 
         registry = WorkerRegistry()
         execution = WorkerExecution(
@@ -880,9 +933,10 @@ class TestWorkerRegistry:
     @pytest.mark.asyncio
     async def test_complete_worker(self):
         """Test completing a worker updates status."""
-        from junie_adapter import WorkerRegistry, WorkerExecution
-        from junie_adapter.models import WorkerStatus
         from datetime import datetime
+
+        from junie_adapter import WorkerExecution, WorkerRegistry
+        from junie_adapter.models import WorkerStatus
 
         registry = WorkerRegistry()
         execution = WorkerExecution(
@@ -913,9 +967,10 @@ class TestWorkerRegistry:
     @pytest.mark.asyncio
     async def test_remove_worker(self):
         """Test removing a worker from registry."""
-        from junie_adapter import WorkerRegistry, WorkerExecution
-        from junie_adapter.models import WorkerStatus
         from datetime import datetime
+
+        from junie_adapter import WorkerExecution, WorkerRegistry
+        from junie_adapter.models import WorkerStatus
 
         registry = WorkerRegistry()
         execution = WorkerExecution(
@@ -949,9 +1004,10 @@ class TestWorkerRegistry:
     @pytest.mark.asyncio
     async def test_get_active_workers(self):
         """Test getting all active workers."""
-        from junie_adapter import WorkerRegistry, WorkerExecution
-        from junie_adapter.models import WorkerStatus
         from datetime import datetime
+
+        from junie_adapter import WorkerExecution, WorkerRegistry
+        from junie_adapter.models import WorkerStatus
 
         registry = WorkerRegistry()
         for i in range(3):
@@ -990,6 +1046,7 @@ class TestWorkerRegistry:
     def test_get_worker_registry_singleton(self):
         """Test that get_worker_registry returns the same instance."""
         from junie_adapter import get_worker_registry
+
         reg1 = get_worker_registry()
         reg2 = get_worker_registry()
         assert reg1 is reg2
@@ -1040,12 +1097,14 @@ class TestStreaming:
     def test_sse_event_format(self):
         """Test SSE event formatting."""
         from junie_adapter.service import sse_event
+
         result = sse_event('{"test": "data"}')
         assert result == 'data: {"test": "data"}\n\n'
 
     def test_make_completion_response(self):
         """Test completion response format."""
         from junie_adapter.service import make_completion_response
+
         result = make_completion_response("Test content")
         assert result["object"] == "chat.completion"
         assert result["choices"][0]["message"]["content"] == "Test content"

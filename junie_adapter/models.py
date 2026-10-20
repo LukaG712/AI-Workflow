@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
 
 
 class TaskStatus(Enum):
@@ -13,6 +12,7 @@ class TaskStatus(Enum):
 
 class WorkerStatus(Enum):
     """Status of a worker execution task."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -27,18 +27,18 @@ class RunResult:
     task: str
     answer: str
     status: TaskStatus
-    error: Optional[str] = None
+    error: str | None = None
     duration_seconds: float = 0.0
 
 
 @dataclass
 class SessionLog:
     raw_prompt: str
-    refined_prompt: Optional[str] = None
+    refined_prompt: str | None = None
     answer: str = ""
     status: TaskStatus = TaskStatus.COMPLETED
     timestamp: datetime = field(default_factory=datetime.now)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -47,19 +47,20 @@ class WorkerExecution:
 
     Extends RunResult with worker-specific fields for multi-agent orchestration.
     """
+
     worker_id: str
     task_id: str
-    parent_task_id: Optional[str]
+    parent_task_id: str | None
     task_description: str
     project_path: str
-    worktree_path: Optional[str]
+    worktree_path: str | None
     status: WorkerStatus
-    pid: Optional[int]
+    pid: int | None
     start_time: datetime
-    end_time: Optional[datetime]
+    end_time: datetime | None
     stdout: str
     stderr: str
-    exit_code: Optional[int]
-    result_summary: Optional[str]
-    changed_files: List[str]
-    error: Optional[str] = None
+    exit_code: int | None
+    result_summary: str | None
+    changed_files: list[str]
+    error: str | None = None

@@ -4,7 +4,6 @@ Uses mocked Junie (fake_junie.py) and mocked worktree manager — no live Junie 
 """
 
 import asyncio
-import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -44,12 +43,31 @@ def config(tmp_path: Path):
 def _init_git_repo(path: Path) -> Path:
     """Initialize a Git repo at the given path with one commit on the master branch."""
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "master"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "master"], cwd=str(path), check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
     (path / "README.md").write_text("# Test Project\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=str(path), check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
     return path
 
 
@@ -111,7 +129,9 @@ class TestExecuteWorker:
         assert result.parent_task_id == "parent-1"
 
     @pytest.mark.asyncio
-    async def test_execution_with_worktree(self, config: OrchestratorConfig, tmp_path: Path):
+    async def test_execution_with_worktree(
+        self, config: OrchestratorConfig, tmp_path: Path
+    ):
         """Test execution with worktree isolation."""
         _init_git_repo(config.workspace_dir)
 
@@ -120,6 +140,7 @@ class TestExecuteWorker:
         mock_info.worktree_path.mkdir(parents=True, exist_ok=True)
 
         from junie_adapter.models import RunResult, TaskStatus
+
         mock_result = RunResult(
             task="Test with worktree",
             answer="Test answer",
@@ -128,15 +149,19 @@ class TestExecuteWorker:
             duration_seconds=1.0,
         )
 
-        with patch(
-            "junie_adapter.worker_executor.validate_git_repo", return_value=True
-        ), patch(
-            "junie_adapter.worker_executor.create_worktree", return_value=mock_info
-        ), patch(
-            "junie_adapter.worktree_manager.get_changed_files", return_value=["file1.py"]
-        ), patch(
-            "junie_adapter.junie_runner.run_junie_task",
-            new=AsyncMock(return_value=mock_result)
+        with (
+            patch("junie_adapter.worker_executor.validate_git_repo", return_value=True),
+            patch(
+                "junie_adapter.worker_executor.create_worktree", return_value=mock_info
+            ),
+            patch(
+                "junie_adapter.worktree_manager.get_changed_files",
+                return_value=["file1.py"],
+            ),
+            patch(
+                "junie_adapter.junie_runner.run_junie_task",
+                new=AsyncMock(return_value=mock_result),
+            ),
         ):
             result = await execute_worker(
                 task_description="Test with worktree",
@@ -151,11 +176,14 @@ class TestExecuteWorker:
     @pytest.mark.asyncio
     async def test_execution_timeout(self, config: OrchestratorConfig):
         """Test that timeout returns TIMED_OUT status."""
-        with patch(
-            "junie_adapter.worker_executor.validate_git_repo", return_value=False
-        ), patch(
-            "junie_adapter.junie_runner.run_junie_task",
-            new=AsyncMock(side_effect=asyncio.TimeoutError())
+        with (
+            patch(
+                "junie_adapter.worker_executor.validate_git_repo", return_value=False
+            ),
+            patch(
+                "junie_adapter.junie_runner.run_junie_task",
+                new=AsyncMock(side_effect=asyncio.TimeoutError()),
+            ),
         ):
             result = await execute_worker(
                 task_description="Slow task",
@@ -207,11 +235,10 @@ class TestExecuteWorker:
     @pytest.mark.asyncio
     async def test_use_worktree_false(self, config: OrchestratorConfig):
         """Test that use_worktree=False skips worktree creation."""
-        with patch(
-            "junie_adapter.worker_executor.validate_git_repo", return_value=True
-        ), patch(
-            "junie_adapter.worktree_manager.create_worktree"
-        ) as mock_create:
+        with (
+            patch("junie_adapter.worker_executor.validate_git_repo", return_value=True),
+            patch("junie_adapter.worktree_manager.create_worktree") as mock_create,
+        ):
             await execute_worker(
                 task_description="No worktree task",
                 config=config,
@@ -244,11 +271,12 @@ class TestExecuteWorkerAndCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_no_worktree(self, config: OrchestratorConfig):
         """Test that cleanup is skipped when no worktree was created."""
-        with patch(
-            "junie_adapter.worker_executor.validate_git_repo", return_value=False
-        ), patch(
-            "junie_adapter.worktree_manager.remove_worktree"
-        ) as mock_remove:
+        with (
+            patch(
+                "junie_adapter.worker_executor.validate_git_repo", return_value=False
+            ),
+            patch("junie_adapter.worktree_manager.remove_worktree") as mock_remove,
+        ):
             await execute_worker_and_cleanup(
                 task_description="No cleanup task",
                 config=config,
@@ -365,7 +393,9 @@ class TestPersistentStoreIntegration:
         # Verify task is in the store
         task = store.get_task("task-persist-parent")
         assert task is not None, "Task not found in store"
-        assert task.parent_task_id == "parent-task-1", f"Expected 'parent-task-1', got {task.parent_task_id!r}"
+        assert task.parent_task_id == "parent-task-1", (
+            f"Expected 'parent-task-1', got {task.parent_task_id!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_persists_failed_status(self, config: OrchestratorConfig):
@@ -399,11 +429,14 @@ class TestPersistentStoreIntegration:
 
         store = PersistentStore(":memory:")
 
-        with patch(
-            "junie_adapter.worker_executor.validate_git_repo", return_value=False
-        ), patch(
-            "junie_adapter.junie_runner.run_junie_task",
-            new=AsyncMock(side_effect=asyncio.TimeoutError())
+        with (
+            patch(
+                "junie_adapter.worker_executor.validate_git_repo", return_value=False
+            ),
+            patch(
+                "junie_adapter.junie_runner.run_junie_task",
+                new=AsyncMock(side_effect=asyncio.TimeoutError()),
+            ),
         ):
             result = await execute_worker(
                 task_description="Timed out task",
@@ -439,10 +472,12 @@ class TestPersistentStoreIntegration:
         assert result.status == WorkerStatus.COMPLETED
 
     @pytest.mark.asyncio
-    async def test_persists_changed_files(self, config: OrchestratorConfig, tmp_path: Path):
+    async def test_persists_changed_files(
+        self, config: OrchestratorConfig, tmp_path: Path
+    ):
         """Test that changed files are persisted correctly."""
-        from junie_adapter.persistent_store import PersistentStore
         from junie_adapter.models import RunResult, TaskStatus
+        from junie_adapter.persistent_store import PersistentStore
 
         store = PersistentStore(":memory:")
 
@@ -460,18 +495,21 @@ class TestPersistentStoreIntegration:
             duration_seconds=1.0,
         )
 
-        with patch(
-            "junie_adapter.worker_executor.validate_git_repo", return_value=True
-        ), patch(
-            "junie_adapter.worker_executor.create_worktree", return_value=mock_info
-        ), patch(
-            "junie_adapter.worktree_manager.get_changed_files",
-            return_value=["file1.py", "file2.py"]
-        ), patch(
-            "junie_adapter.junie_runner.run_junie_task",
-            new=AsyncMock(return_value=mock_result)
+        with (
+            patch("junie_adapter.worker_executor.validate_git_repo", return_value=True),
+            patch(
+                "junie_adapter.worker_executor.create_worktree", return_value=mock_info
+            ),
+            patch(
+                "junie_adapter.worktree_manager.get_changed_files",
+                return_value=["file1.py", "file2.py"],
+            ),
+            patch(
+                "junie_adapter.junie_runner.run_junie_task",
+                new=AsyncMock(return_value=mock_result),
+            ),
         ):
-            result = await execute_worker(
+            await execute_worker(
                 task_description="Test with changed files",
                 config=config,
                 worker_id="worker-persist-6",
@@ -484,7 +522,9 @@ class TestPersistentStoreIntegration:
         assert task.changed_files == ["file1.py", "file2.py"]
 
     @pytest.mark.asyncio
-    async def test_store_error_does_not_break_execution(self, config: OrchestratorConfig):
+    async def test_store_error_does_not_break_execution(
+        self, config: OrchestratorConfig
+    ):
         """Test that a store error doesn't break task execution."""
         from junie_adapter.persistent_store import PersistentStore
 
@@ -507,7 +547,9 @@ class TestPersistentStoreIntegration:
         assert result.status == WorkerStatus.COMPLETED
 
     @pytest.mark.asyncio
-    async def test_execute_worker_and_cleanup_passes_store(self, config: OrchestratorConfig):
+    async def test_execute_worker_and_cleanup_passes_store(
+        self, config: OrchestratorConfig
+    ):
         """Test that execute_worker_and_cleanup passes the store through."""
         from junie_adapter.persistent_store import PersistentStore
 
