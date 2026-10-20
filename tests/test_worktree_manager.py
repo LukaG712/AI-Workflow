@@ -5,7 +5,6 @@ Uses real Git in temporary directories — no live Junie required.
 
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,30 +12,48 @@ import pytest
 
 from junie_adapter.worktree_manager import (
     WorktreeInfo,
-    FileDiff,
-    cleanup_orphaned_worktrees,
-    create_worktree,
-    get_changed_files,
-    get_worker_diff,
-    get_change_summary,
-    remove_worktree,
-    validate_git_repo,
-    _verify_worktree_ownership,
     _is_junie_worktree_path,
     _is_worktree_dirty,
+    _verify_worktree_ownership,
+    cleanup_orphaned_worktrees,
+    create_worktree,
+    get_change_summary,
+    get_changed_files,
+    get_worker_diff,
+    remove_worktree,
+    validate_git_repo,
 )
 
 
 def _init_git_repo(path: Path) -> Path:
     """Initialize a Git repo at the given path with one commit on the master branch."""
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "master"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "master"], cwd=str(path), check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
     # Create an initial file and commit
     (path / "README.md").write_text("# Test Project\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=str(path), check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
     return path
 
 
@@ -153,8 +170,15 @@ class TestGetChangedFiles:
         info = create_worktree(repo, "worker-1")
 
         # Create a new file in the worktree
-        (info.worktree_path / "new_file.py").write_text("print('hello')\n", encoding="utf-8")
-        subprocess.run(["git", "add", "new_file.py"], cwd=str(info.worktree_path), check=True, capture_output=True)
+        (info.worktree_path / "new_file.py").write_text(
+            "print('hello')\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "add", "new_file.py"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # git diff --name-only HEAD should show the staged file
         changed = get_changed_files(info.worktree_path)
@@ -182,10 +206,12 @@ class TestGetChangedFiles:
                 raise RuntimeError("Git command failed")
             return original_run_git(args, cwd=cwd)
 
-        with patch.object(wm_module, "_run_git", failing_diff_git):
+        with (
+            patch.object(wm_module, "_run_git", failing_diff_git),
+            pytest.raises(RuntimeError, match="Git inspection failed"),
+        ):
             # Call through the module so the patch takes effect
-            with pytest.raises(RuntimeError, match="Git inspection failed"):
-                wm_module.get_changed_files(info.worktree_path)
+            wm_module.get_changed_files(info.worktree_path)
 
         remove_worktree(info.worktree_path, force=True)
 
@@ -206,7 +232,9 @@ class TestGetChangedFiles:
         info = create_worktree(repo, "worker-1")
 
         # Create an untracked file (not staged)
-        (info.worktree_path / "untracked.txt").write_text("untracked content\n", encoding="utf-8")
+        (info.worktree_path / "untracked.txt").write_text(
+            "untracked content\n", encoding="utf-8"
+        )
 
         changed = get_changed_files(info.worktree_path)
         assert "untracked.txt" in changed
@@ -233,7 +261,12 @@ class TestGetChangedFiles:
 
         # Delete the README.md that was committed
         (info.worktree_path / "README.md").unlink()
-        subprocess.run(["git", "add", "README.md"], cwd=str(info.worktree_path), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "README.md"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         changed = get_changed_files(info.worktree_path)
         assert "README.md" in changed
@@ -247,7 +280,12 @@ class TestGetChangedFiles:
 
         # Create and stage a new file
         (info.worktree_path / "staged.py").write_text("x = 1\n", encoding="utf-8")
-        subprocess.run(["git", "add", "staged.py"], cwd=str(info.worktree_path), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "staged.py"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         changed = get_changed_files(info.worktree_path)
         assert "staged.py" in changed
@@ -260,7 +298,9 @@ class TestGetChangedFiles:
         info = create_worktree(repo, "worker-1")
 
         # Create a file with spaces
-        (info.worktree_path / "file with spaces.txt").write_text("content\n", encoding="utf-8")
+        (info.worktree_path / "file with spaces.txt").write_text(
+            "content\n", encoding="utf-8"
+        )
 
         changed = get_changed_files(info.worktree_path)
         assert "file with spaces.txt" in changed
@@ -276,16 +316,30 @@ class TestGetChangedFiles:
         base_commit = info.base_commit
 
         # Make a commit in the worktree
-        (info.worktree_path / "new_committed.py").write_text("committed = True\n", encoding="utf-8")
-        subprocess.run(["git", "add", "new_committed.py"], cwd=str(info.worktree_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add new file"], cwd=str(info.worktree_path), check=True, capture_output=True)
+        (info.worktree_path / "new_committed.py").write_text(
+            "committed = True\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "add", "new_committed.py"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add new file"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # Without base_commit, HEAD diff shows no changes (committed)
         changed_without_base = get_changed_files(info.worktree_path)
         assert "new_committed.py" not in changed_without_base
 
         # With base_commit, the committed change should be visible
-        changed_with_base = get_changed_files(info.worktree_path, base_commit=base_commit)
+        changed_with_base = get_changed_files(
+            info.worktree_path, base_commit=base_commit
+        )
         assert "new_committed.py" in changed_with_base
 
         remove_worktree(info.worktree_path, force=True)
@@ -307,7 +361,9 @@ class TestGetWorkerDiff:
         repo = _init_git_repo(tmp_path / "repo")
         info = create_worktree(repo, "worker-1")
 
-        (info.worktree_path / "untracked.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (info.worktree_path / "untracked.txt").write_text(
+            "line1\nline2\n", encoding="utf-8"
+        )
 
         diffs = get_worker_diff(info.worktree_path)
         assert len(diffs) == 1
@@ -323,7 +379,12 @@ class TestGetWorkerDiff:
         info = create_worktree(repo, "worker-1")
 
         (info.worktree_path / "README.md").unlink()
-        subprocess.run(["git", "add", "README.md"], cwd=str(info.worktree_path), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "README.md"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         diffs = get_worker_diff(info.worktree_path)
         assert len(diffs) == 1
@@ -341,8 +402,18 @@ class TestGetWorkerDiff:
 
         # Make a commit in the worktree
         (info.worktree_path / "committed.py").write_text("x = 1\n", encoding="utf-8")
-        subprocess.run(["git", "add", "committed.py"], cwd=str(info.worktree_path), check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add file"], cwd=str(info.worktree_path), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "committed.py"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add file"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # Diff against base_commit should show the committed change
         diffs = get_worker_diff(info.worktree_path, base_commit=base_commit)
@@ -401,7 +472,9 @@ class TestRemoveWorktreeSafety:
         unrelated_dir = tmp_path / "unrelated"
         unrelated_dir.mkdir()
         # Create a .git file to make it look like a repo
-        (unrelated_dir / ".git").write_text("gitdir: /some/other/path\n", encoding="utf-8")
+        (unrelated_dir / ".git").write_text(
+            "gitdir: /some/other/path\n", encoding="utf-8"
+        )
 
         with pytest.raises(RuntimeError):
             remove_worktree(unrelated_dir)
@@ -440,9 +513,11 @@ class TestCleanupOrphanedWorktreesSafety:
         (unrelated / "data.txt").write_text("important data\n", encoding="utf-8")
         # No .git file — should not be deleted
 
-        cleaned = cleanup_orphaned_worktrees(repo)
+        cleanup_orphaned_worktrees(repo)
         assert unrelated.exists()
-        assert (unrelated / "data.txt").read_text(encoding="utf-8") == "important data\n"
+        assert (unrelated / "data.txt").read_text(
+            encoding="utf-8"
+        ) == "important data\n"
 
     def test_preserves_worktree_with_unreviewed_changes(self, tmp_path: Path):
         """Tracked worktrees with changes should not be deleted."""
@@ -450,7 +525,9 @@ class TestCleanupOrphanedWorktreesSafety:
         info = create_worktree(repo, "worker-1")
 
         # Make changes in the worktree
-        (info.worktree_path / "important.py").write_text("critical code\n", encoding="utf-8")
+        (info.worktree_path / "important.py").write_text(
+            "critical code\n", encoding="utf-8"
+        )
 
         # The worktree is tracked, so it should not be cleaned
         cleaned = cleanup_orphaned_worktrees(repo)
@@ -469,7 +546,9 @@ class TestCleanupOrphanedWorktreesSafety:
         fake_worktree = worktrees_dir / "other-repo-worktree"
         fake_worktree.mkdir()
         # Point to a completely different repo
-        (fake_worktree / ".git").write_text("gitdir: /completely/different/repo/.git\n", encoding="utf-8")
+        (fake_worktree / ".git").write_text(
+            "gitdir: /completely/different/repo/.git\n", encoding="utf-8"
+        )
         (fake_worktree / "data.txt").write_text("should survive\n", encoding="utf-8")
 
         cleaned = cleanup_orphaned_worktrees(repo1)
@@ -493,7 +572,8 @@ class TestCleanupOrphanedWorktreesSafety:
         info.worktree_path.mkdir(parents=True)
         # Create a .git file pointing to the main repo's worktrees dir
         (info.worktree_path / ".git").write_text(
-            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n", encoding="utf-8"
+            f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
+            encoding="utf-8",
         )
 
         cleaned = cleanup_orphaned_worktrees(repo)
@@ -528,7 +608,9 @@ class TestCleanupOrphanedWorktreesSafety:
         # Create a directory with .git pointing to a different repo
         unowned = worktrees_dir / "unowned-worktree"
         unowned.mkdir()
-        (unowned / ".git").write_text("gitdir: /different/repo/.git\n", encoding="utf-8")
+        (unowned / ".git").write_text(
+            "gitdir: /different/repo/.git\n", encoding="utf-8"
+        )
         assert _verify_worktree_ownership(unowned, repo) is False
 
         # Directory without .git file
@@ -561,7 +643,9 @@ class TestRemoveWorktreeDirtyProtection:
         info = create_worktree(repo, "worker-1")
 
         # Create an untracked file
-        (info.worktree_path / "new_file.txt").write_text("new content\n", encoding="utf-8")
+        (info.worktree_path / "new_file.txt").write_text(
+            "new content\n", encoding="utf-8"
+        )
 
         with pytest.raises(RuntimeError, match="uncommitted changes"):
             remove_worktree(info.worktree_path)
@@ -755,9 +839,11 @@ class TestCleanupOrphanedSafety:
                 raise RuntimeError("Git worktree list failed")
             return original_run_git(args, cwd=cwd)
 
-        with patch.object(wm_module, "_run_git", failing_git):
-            with pytest.raises(RuntimeError, match="aborting cleanup"):
-                wm_module.cleanup_orphaned_worktrees(repo)
+        with (
+            patch.object(wm_module, "_run_git", failing_git),
+            pytest.raises(RuntimeError, match="aborting cleanup"),
+        ):
+            wm_module.cleanup_orphaned_worktrees(repo)
 
         # Orphan should NOT be deleted because cleanup aborted
         assert orphan.exists()
@@ -774,7 +860,9 @@ class TestCleanupOrphanedSafety:
         info = create_worktree(repo, "worker-1")
 
         # Make the worktree dirty — this is the key condition
-        (info.worktree_path / "important.py").write_text("critical code\n", encoding="utf-8")
+        (info.worktree_path / "important.py").write_text(
+            "critical code\n", encoding="utf-8"
+        )
 
         # The worktree is tracked, so cleanup should skip it entirely
         cleaned = cleanup_orphaned_worktrees(repo)
@@ -801,9 +889,11 @@ class TestCleanupOrphanedSafety:
             symlink.symlink_to(target)
 
             # The symlink should not be deleted
-            cleaned = cleanup_orphaned_worktrees(repo)
+            cleanup_orphaned_worktrees(repo)
             assert target.exists()
-            assert (target / "data.txt").read_text(encoding="utf-8") == "should survive\n"
+            assert (target / "data.txt").read_text(
+                encoding="utf-8"
+            ) == "should survive\n"
         except OSError:
             # Symlinks may not be supported without admin rights on Windows
             pytest.skip("Symlink creation not supported")
@@ -859,8 +949,12 @@ class TestCleanupOrphanedSafety:
         # Create a directory with valuable files but no .git file
         no_git_dir = worktrees_dir / "valuable-work"
         no_git_dir.mkdir()
-        (no_git_dir / "important_data.csv").write_text("col1,col2\n1,2\n", encoding="utf-8")
-        (no_git_dir / "research_notes.md").write_text("# Research\nImportant findings\n", encoding="utf-8")
+        (no_git_dir / "important_data.csv").write_text(
+            "col1,col2\n1,2\n", encoding="utf-8"
+        )
+        (no_git_dir / "research_notes.md").write_text(
+            "# Research\nImportant findings\n", encoding="utf-8"
+        )
 
         cleaned = cleanup_orphaned_worktrees(repo)
 
@@ -891,12 +985,12 @@ class TestCleanupOrphanedSafety:
             f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
             encoding="utf-8",
         )
-        (info.worktree_path / "valuable.py").write_text("important code\n", encoding="utf-8")
+        (info.worktree_path / "valuable.py").write_text(
+            "important code\n", encoding="utf-8"
+        )
 
         # Patch _is_worktree_dirty to simulate git status failure
         import junie_adapter.worktree_manager as wm_module
-
-        original_dirty = wm_module._is_worktree_dirty
 
         def failing_dirty(path):
             raise RuntimeError("git status failed: repository corrupt")
@@ -932,7 +1026,9 @@ class TestCleanupOrphanedSafety:
         assert (unclassifiable / "data.txt").exists()
         assert unclassifiable not in cleaned
 
-    def test_missing_gitdir_metadata_with_valuable_files_preserved(self, tmp_path: Path):
+    def test_missing_gitdir_metadata_with_valuable_files_preserved(
+        self, tmp_path: Path
+    ):
         """Missing gitdir metadata alone must not trigger deletion.
 
         Even when the gitdir path from the .git file no longer exists (truly orphaned),
@@ -955,7 +1051,9 @@ class TestCleanupOrphanedSafety:
             encoding="utf-8",
         )
         # Add untracked (dirty) file
-        (info.worktree_path / "unreviewed_work.py").write_text("critical work\n", encoding="utf-8")
+        (info.worktree_path / "unreviewed_work.py").write_text(
+            "critical work\n", encoding="utf-8"
+        )
 
         cleaned = cleanup_orphaned_worktrees(repo)
 
@@ -1014,7 +1112,9 @@ class TestCleanupOrphanedSafety:
             f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
             encoding="utf-8",
         )
-        (info.worktree_path / "valuable.py").write_text("important code\n", encoding="utf-8")
+        (info.worktree_path / "valuable.py").write_text(
+            "important code\n", encoding="utf-8"
+        )
 
         # Patch _run_git to fail on git status commands
         import junie_adapter.worktree_manager as wm_module
@@ -1053,13 +1153,23 @@ class TestIgnoredFilesPreservation:
         # Create a .gitignore that ignores .env
         (info.worktree_path / ".gitignore").write_text(".env\n", encoding="utf-8")
         # Stage and commit the .gitignore so it's tracked
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
-                       check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
-                       cwd=str(info.worktree_path), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", ".gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add .gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # Create an ignored .env file
-        (info.worktree_path / ".env").write_text("SECRET_KEY=abc123\n", encoding="utf-8")
+        (info.worktree_path / ".env").write_text(
+            "SECRET_KEY=abc123\n", encoding="utf-8"
+        )
 
         # The worktree should be detected as dirty because of the ignored file
         assert _is_worktree_dirty(info.worktree_path) is True
@@ -1072,11 +1182,21 @@ class TestIgnoredFilesPreservation:
         info = create_worktree(repo, "worker-1")
 
         # Create a .gitignore that ignores __pycache__
-        (info.worktree_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
-                       check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
-                       cwd=str(info.worktree_path), check=True, capture_output=True)
+        (info.worktree_path / ".gitignore").write_text(
+            "__pycache__/\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "add", ".gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add .gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # Create an ignored __pycache__ directory with a file
         pycache = info.worktree_path / "__pycache__"
@@ -1117,13 +1237,23 @@ class TestIgnoredFilesPreservation:
 
         # Create a .gitignore that ignores .env
         (info.worktree_path / ".gitignore").write_text(".env\n", encoding="utf-8")
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
-                       check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
-                       cwd=str(info.worktree_path), check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", ".gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add .gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # Create an ignored .env file
-        (info.worktree_path / ".env").write_text("SECRET_KEY=abc123\n", encoding="utf-8")
+        (info.worktree_path / ".env").write_text(
+            "SECRET_KEY=abc123\n", encoding="utf-8"
+        )
 
         # Remove Git tracking to simulate orphan
         shutil.rmtree(info.worktree_path)
@@ -1140,7 +1270,9 @@ class TestIgnoredFilesPreservation:
         # Recreate the gitdir metadata so git status works
         git_worktrees_dir.mkdir(parents=True)
         (info.worktree_path / ".gitignore").write_text(".env\n", encoding="utf-8")
-        (info.worktree_path / ".env").write_text("SECRET_KEY=abc123\n", encoding="utf-8")
+        (info.worktree_path / ".env").write_text(
+            "SECRET_KEY=abc123\n", encoding="utf-8"
+        )
 
         cleaned = cleanup_orphaned_worktrees(repo)
 
@@ -1149,17 +1281,29 @@ class TestIgnoredFilesPreservation:
         assert (info.worktree_path / ".env").exists()
         assert info.worktree_path not in cleaned
 
-    def test_orphan_cleanup_preserves_worktree_with_nested_ignored_dir(self, tmp_path: Path):
+    def test_orphan_cleanup_preserves_worktree_with_nested_ignored_dir(
+        self, tmp_path: Path
+    ):
         """Orphan cleanup must not delete a worktree with nested ignored directories."""
         repo = _init_git_repo(tmp_path / "repo")
         info = create_worktree(repo, "worker-1")
 
         # Create .gitignore
-        (info.worktree_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(info.worktree_path),
-                       check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Add .gitignore"],
-                       cwd=str(info.worktree_path), check=True, capture_output=True)
+        (info.worktree_path / ".gitignore").write_text(
+            "__pycache__/\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "add", ".gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add .gitignore"],
+            cwd=str(info.worktree_path),
+            check=True,
+            capture_output=True,
+        )
 
         # Create nested ignored directory
         pycache = info.worktree_path / "__pycache__" / "submodule"
@@ -1179,7 +1323,9 @@ class TestIgnoredFilesPreservation:
             encoding="utf-8",
         )
         git_worktrees_dir.mkdir(parents=True)
-        (info.worktree_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+        (info.worktree_path / ".gitignore").write_text(
+            "__pycache__/\n", encoding="utf-8"
+        )
         pycache = info.worktree_path / "__pycache__" / "submodule"
         pycache.mkdir(parents=True)
         (pycache / "cached.pyc").write_bytes(b"bytecode")
@@ -1191,14 +1337,20 @@ class TestIgnoredFilesPreservation:
         assert (pycache / "cached.pyc").exists()
         assert info.worktree_path not in cleaned
 
-    def test_orphan_cleanup_preserves_worktree_with_local_only_files(self, tmp_path: Path):
+    def test_orphan_cleanup_preserves_worktree_with_local_only_files(
+        self, tmp_path: Path
+    ):
         """Orphan cleanup must not delete a worktree with local-only (untracked) files."""
         repo = _init_git_repo(tmp_path / "repo")
         info = create_worktree(repo, "worker-1")
 
         # Create local-only files that a worker might generate
-        (info.worktree_path / "debug_log.txt").write_text("debug output\n", encoding="utf-8")
-        (info.worktree_path / "temp_notes.md").write_text("# Notes\nTODO\n", encoding="utf-8")
+        (info.worktree_path / "debug_log.txt").write_text(
+            "debug output\n", encoding="utf-8"
+        )
+        (info.worktree_path / "temp_notes.md").write_text(
+            "# Notes\nTODO\n", encoding="utf-8"
+        )
 
         # Remove Git tracking to simulate orphan
         shutil.rmtree(info.worktree_path)
@@ -1213,8 +1365,12 @@ class TestIgnoredFilesPreservation:
             encoding="utf-8",
         )
         git_worktrees_dir.mkdir(parents=True)
-        (info.worktree_path / "debug_log.txt").write_text("debug output\n", encoding="utf-8")
-        (info.worktree_path / "temp_notes.md").write_text("# Notes\nTODO\n", encoding="utf-8")
+        (info.worktree_path / "debug_log.txt").write_text(
+            "debug output\n", encoding="utf-8"
+        )
+        (info.worktree_path / "temp_notes.md").write_text(
+            "# Notes\nTODO\n", encoding="utf-8"
+        )
 
         cleaned = cleanup_orphaned_worktrees(repo)
 
@@ -1278,7 +1434,9 @@ class TestIgnoredFilesPreservation:
             f"gitdir: {repo / '.git' / 'worktrees' / info.branch_name}\n",
             encoding="utf-8",
         )
-        (info.worktree_path / "valuable.py").write_text("important code\n", encoding="utf-8")
+        (info.worktree_path / "valuable.py").write_text(
+            "important code\n", encoding="utf-8"
+        )
 
         cleaned = cleanup_orphaned_worktrees(repo)
 

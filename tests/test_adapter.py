@@ -4,21 +4,18 @@ Verifies that the adapter provides a clean, typed API for AgentHub integration
 without requiring private implementation details.
 """
 
-import asyncio
-import os
-import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from junie_adapter import (
-    JunieAdapter,
     AdapterRequest,
     AdapterResult,
-    OrchestratorConfig,
     IsolationMode,
+    JunieAdapter,
+    OrchestratorConfig,
 )
 from junie_adapter.models import WorkerStatus
 
@@ -134,13 +131,27 @@ class TestJunieAdapter:
     async def test_get_changed_files_empty(self):
         """Test get_changed_files returns empty list for clean repo."""
         with tempfile.TemporaryDirectory() as tmp:
-            # Initialize a Git repo
-            os.system(f"git init {tmp} > /dev/null 2>&1")
-            os.system(f"cd {tmp} && git config user.email 'test@test.com' && git config user.name 'Test'")
+            # Initialize a Git repo using subprocess instead of os.system
+            import subprocess
+
+            subprocess.run(["git", "init", tmp], capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@test.com"],
+                cwd=tmp,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test"],
+                cwd=tmp,
+                capture_output=True,
+            )
             # Create and commit a file
             test_file = Path(tmp) / "test.txt"
             test_file.write_text("hello")
-            os.system(f"cd {tmp} && git add . && git commit -m 'init' > /dev/null 2>&1")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "init"], cwd=tmp, capture_output=True
+            )
 
             adapter = JunieAdapter(workspace_path=tmp)
             files = await adapter.get_changed_files(tmp)
@@ -181,8 +192,9 @@ class TestJunieAdapter:
             )
 
             # Mock execute_worker to return a completed result
-            from junie_adapter.models import WorkerExecution
             from datetime import datetime
+
+            from junie_adapter.models import WorkerExecution
 
             mock_result = WorkerExecution(
                 worker_id=request.worker_id,
