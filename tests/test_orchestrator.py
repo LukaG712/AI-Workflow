@@ -178,7 +178,8 @@ class TestJunieRunner:
         assert has_rate_limit('RESOURCE_EXHAUSTED') is True
         assert has_rate_limit('{"answer": "normal output"}') is False
 
-    def test_run_junie_not_found(self):
+    @pytest.mark.asyncio
+    async def test_run_junie_not_found(self):
         """Test Junie not found returns FAILED status."""
         from junie_adapter.config import OrchestratorConfig
         from junie_adapter.junie_runner import run_junie_task
@@ -190,13 +191,12 @@ class TestJunieRunner:
                 junie_bin="/nonexistent/junie",
                 junie_timeout=1,
             )
-            result = asyncio.get_event_loop().run_until_complete(
-                run_junie_task("test task", config)
-            )
+            result = await run_junie_task("test task", config)
             assert result.status == TaskStatus.FAILED
             assert "Junie CLI not found" in result.answer
 
-    def test_run_junie_success_with_fake(self):
+    @pytest.mark.asyncio
+    async def test_run_junie_success_with_fake(self):
         """Test successful Junie run with fake binary."""
         from junie_adapter.config import OrchestratorConfig
         from junie_adapter.junie_runner import run_junie_task
@@ -209,9 +209,7 @@ class TestJunieRunner:
                 junie_bin=str(fake_junie),
                 junie_timeout=10,
             )
-            result = asyncio.get_event_loop().run_until_complete(
-                run_junie_task("test task", config)
-            )
+            result = await run_junie_task("test task", config)
             assert result.status == TaskStatus.COMPLETED
             assert "sample answer" in result.answer
 
@@ -234,7 +232,8 @@ class TestPromptRefiner:
         assert "PROMPT_REWRITE_SYSTEM_BASE" not in system  # The actual text, not the variable name
         assert "You rewrite rough requests" in system
 
-    def test_refine_prompt_ollama_unavailable(self):
+    @pytest.mark.asyncio
+    async def test_refine_prompt_ollama_unavailable(self):
         """Test refinement falls back to raw prompt when Ollama is unavailable."""
         from junie_adapter.config import OrchestratorConfig
         from junie_adapter.prompt_refiner import refine_prompt
@@ -243,16 +242,15 @@ class TestPromptRefiner:
             ollama_url="http://localhost:9999",  # Non-existent
             ollama_model="test-model",
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            refine_prompt("test prompt", config)
-        )
+        result = await refine_prompt("test prompt", config)
         improved, fallback, error = result
         assert improved == "test prompt"
         assert fallback is True
         assert error  # Should have an error reason
 
     @pytest.mark.respx(assert_all_called=False)
-    def test_refine_prompt_with_mock_ollama(self):
+    @pytest.mark.asyncio
+    async def test_refine_prompt_with_mock_ollama(self):
         """Test refinement with mocked Ollama response."""
         import respx
         from junie_adapter.config import OrchestratorConfig
@@ -268,9 +266,7 @@ class TestPromptRefiner:
                     "message": {"content": "Refined prompt text"}
                 })
             )
-            result = asyncio.get_event_loop().run_until_complete(
-                refine_prompt("raw prompt", config)
-            )
+            result = await refine_prompt("raw prompt", config)
             improved, fallback, error = result
             assert improved == "Refined prompt text"
             assert fallback is False
@@ -386,7 +382,8 @@ class TestObsidian:
 
 
 class TestSessionLogger:
-    def test_log_session_basic(self):
+    @pytest.mark.asyncio
+    async def test_log_session_basic(self):
         """Test basic session logging."""
         from junie_adapter.config import OrchestratorConfig
         from junie_adapter.models import SessionLog, TaskStatus
@@ -399,15 +396,14 @@ class TestSessionLogger:
                 answer="test answer",
                 status=TaskStatus.COMPLETED,
             )
-            asyncio.get_event_loop().run_until_complete(
-                log_session(session_log, config)
-            )
+            await log_session(session_log, config)
             logs = list(config.session_logs_dir.glob("session-*.md"))
             assert len(logs) == 1
             content = logs[0].read_text(encoding="utf-8")
             assert "test prompt" in content
 
-    def test_log_session_with_refined_prompt(self):
+    @pytest.mark.asyncio
+    async def test_log_session_with_refined_prompt(self):
         """Test session logging preserves original and refined prompts."""
         from junie_adapter.config import OrchestratorConfig
         from junie_adapter.models import SessionLog, TaskStatus
@@ -421,9 +417,7 @@ class TestSessionLogger:
                 answer="test answer",
                 status=TaskStatus.COMPLETED,
             )
-            asyncio.get_event_loop().run_until_complete(
-                log_session(session_log, config)
-            )
+            await log_session(session_log, config)
             logs = list(config.session_logs_dir.glob("session-*.md"))
             assert len(logs) == 1
 
@@ -805,46 +799,42 @@ class TestValidateWorkspace:
 class TestWorkerSemaphore:
     """Test WorkerSemaphore concurrency limiter."""
 
-    def test_semaphore_limits_concurrency(self):
+    @pytest.mark.asyncio
+    async def test_semaphore_limits_concurrency(self):
         """Test that semaphore limits concurrent access."""
         from junie_adapter import WorkerSemaphore
 
-        async def test():
-            sem = WorkerSemaphore(max_workers=2)
-            assert sem.active_count == 0
+        sem = WorkerSemaphore(max_workers=2)
+        assert sem.active_count == 0
 
-            await sem.acquire()
-            assert sem.active_count == 1
+        await sem.acquire()
+        assert sem.active_count == 1
 
-            await sem.acquire()
-            assert sem.active_count == 2
+        await sem.acquire()
+        assert sem.active_count == 2
 
-            await sem.release()
-            assert sem.active_count == 1
+        await sem.release()
+        assert sem.active_count == 1
 
-            await sem.release()
-            assert sem.active_count == 0
+        await sem.release()
+        assert sem.active_count == 0
 
-        asyncio.get_event_loop().run_until_complete(test())
-
-    def test_semaphore_blocks_when_full(self):
+    @pytest.mark.asyncio
+    async def test_semaphore_blocks_when_full(self):
         """Test that semaphore enforces max workers."""
         from junie_adapter import WorkerSemaphore
 
-        async def test():
-            sem = WorkerSemaphore(max_workers=1)
-            await sem.acquire()
-            assert sem.active_count == 1
+        sem = WorkerSemaphore(max_workers=1)
+        await sem.acquire()
+        assert sem.active_count == 1
 
-            await sem.release()
-            assert sem.active_count == 0
+        await sem.release()
+        assert sem.active_count == 0
 
-            # Verify we can acquire again after release
-            await sem.acquire()
-            assert sem.active_count == 1
-            await sem.release()
-
-        asyncio.get_event_loop().run_until_complete(test())
+        # Verify we can acquire again after release
+        await sem.acquire()
+        assert sem.active_count == 1
+        await sem.release()
 
 
 # ─── WorkerRegistry tests ────────────────────────────────────────────────────
@@ -853,90 +843,123 @@ class TestWorkerSemaphore:
 class TestWorkerRegistry:
     """Test WorkerRegistry for tracking active workers."""
 
-    def test_register_and_get(self):
+    @pytest.mark.asyncio
+    async def test_register_and_get(self):
         """Test registering and retrieving a worker."""
         from junie_adapter import WorkerRegistry, WorkerExecution
         from junie_adapter.models import WorkerStatus
         from datetime import datetime
 
-        async def test():
-            registry = WorkerRegistry()
-            execution = WorkerExecution(
-                worker_id="worker-1",
-                task_id="task-1",
-                parent_task_id=None,
-                task_description="Test task",
-                project_path="/tmp/test",
-                worktree_path=None,
-                status=WorkerStatus.QUEUED,
-                pid=None,
-                start_time=datetime.now(),
-                end_time=None,
-                stdout="",
-                stderr="",
-                exit_code=None,
-                result_summary=None,
-                changed_files=[],
-                error=None,
-            )
-            await registry.register("worker-1", execution)
-            assert registry.active_count == 1
+        registry = WorkerRegistry()
+        execution = WorkerExecution(
+            worker_id="worker-1",
+            task_id="task-1",
+            parent_task_id=None,
+            task_description="Test task",
+            project_path="/tmp/test",
+            worktree_path=None,
+            status=WorkerStatus.QUEUED,
+            pid=None,
+            start_time=datetime.now(),
+            end_time=None,
+            stdout="",
+            stderr="",
+            exit_code=None,
+            result_summary=None,
+            changed_files=[],
+            error=None,
+        )
+        await registry.register("worker-1", execution)
+        assert registry.active_count == 1
 
-            found = await registry.get("worker-1")
-            assert found is not None
-            assert found.worker_id == "worker-1"
-            assert found.status == WorkerStatus.RUNNING  # register sets RUNNING
+        found = await registry.get("worker-1")
+        assert found is not None
+        assert found.worker_id == "worker-1"
+        assert found.status == WorkerStatus.RUNNING  # register sets RUNNING
 
-        asyncio.get_event_loop().run_until_complete(test())
-
-    def test_complete_worker(self):
+    @pytest.mark.asyncio
+    async def test_complete_worker(self):
         """Test completing a worker updates status."""
         from junie_adapter import WorkerRegistry, WorkerExecution
         from junie_adapter.models import WorkerStatus
         from datetime import datetime
 
-        async def test():
-            registry = WorkerRegistry()
-            execution = WorkerExecution(
-                worker_id="worker-1",
-                task_id="task-1",
-                parent_task_id=None,
-                task_description="Test task",
-                project_path="/tmp/test",
-                worktree_path=None,
-                status=WorkerStatus.RUNNING,
-                pid=None,
-                start_time=datetime.now(),
-                end_time=datetime.now(),
-                stdout="Done",
-                stderr="",
-                exit_code=0,
-                result_summary="Done",
-                changed_files=[],
-                error=None,
-            )
-            await registry.register("worker-1", execution)
-            execution.status = WorkerStatus.COMPLETED
-            await registry.complete("worker-1", execution)
+        registry = WorkerRegistry()
+        execution = WorkerExecution(
+            worker_id="worker-1",
+            task_id="task-1",
+            parent_task_id=None,
+            task_description="Test task",
+            project_path="/tmp/test",
+            worktree_path=None,
+            status=WorkerStatus.RUNNING,
+            pid=None,
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+            stdout="Done",
+            stderr="",
+            exit_code=0,
+            result_summary="Done",
+            changed_files=[],
+            error=None,
+        )
+        await registry.register("worker-1", execution)
+        execution.status = WorkerStatus.COMPLETED
+        await registry.complete("worker-1", execution)
 
-            found = await registry.get("worker-1")
-            assert found.status == WorkerStatus.COMPLETED
+        found = await registry.get("worker-1")
+        assert found.status == WorkerStatus.COMPLETED
 
-        asyncio.get_event_loop().run_until_complete(test())
-
-    def test_remove_worker(self):
+    @pytest.mark.asyncio
+    async def test_remove_worker(self):
         """Test removing a worker from registry."""
         from junie_adapter import WorkerRegistry, WorkerExecution
         from junie_adapter.models import WorkerStatus
         from datetime import datetime
 
-        async def test():
-            registry = WorkerRegistry()
+        registry = WorkerRegistry()
+        execution = WorkerExecution(
+            worker_id="worker-1",
+            task_id="task-1",
+            parent_task_id=None,
+            task_description="Test task",
+            project_path="/tmp/test",
+            worktree_path=None,
+            status=WorkerStatus.RUNNING,
+            pid=None,
+            start_time=datetime.now(),
+            end_time=None,
+            stdout="",
+            stderr="",
+            exit_code=None,
+            result_summary=None,
+            changed_files=[],
+            error=None,
+        )
+        await registry.register("worker-1", execution)
+        assert registry.active_count == 1
+
+        result = await registry.remove("worker-1")
+        assert result is True
+        assert registry.active_count == 0
+
+        result = await registry.remove("nonexistent")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_get_active_workers(self):
+        """Test getting all active workers."""
+        from junie_adapter import WorkerRegistry, WorkerExecution
+        from junie_adapter.models import WorkerStatus
+        from datetime import datetime
+
+        registry = WorkerRegistry()
+        for i in range(3):
             execution = WorkerExecution(
-                worker_id="worker-1",
-                task_id="task-1",
+                worker_id=f"worker-{i}",
+                task_id=f"task-{i}",
                 parent_task_id=None,
-                task_description="Test task",
+                task_description=f"Task {i}",
                 project_path="/tmp/test",
                 worktree_path=None,
                 status=WorkerStatus.RUNNING,
@@ -950,62 +973,19 @@ class TestWorkerRegistry:
                 changed_files=[],
                 error=None,
             )
-            await registry.register("worker-1", execution)
-            assert registry.active_count == 1
+            await registry.register(f"worker-{i}", execution)
 
-            result = await registry.remove("worker-1")
-            assert result is True
-            assert registry.active_count == 0
+        active = await registry.get_active()
+        assert len(active) == 3
 
-            result = await registry.remove("nonexistent")
-            assert result is False
-
-        asyncio.get_event_loop().run_until_complete(test())
-
-    def test_get_active_workers(self):
-        """Test getting all active workers."""
-        from junie_adapter import WorkerRegistry, WorkerExecution
-        from junie_adapter.models import WorkerStatus
-        from datetime import datetime
-
-        async def test():
-            registry = WorkerRegistry()
-            for i in range(3):
-                execution = WorkerExecution(
-                    worker_id=f"worker-{i}",
-                    task_id=f"task-{i}",
-                    parent_task_id=None,
-                    task_description=f"Task {i}",
-                    project_path="/tmp/test",
-                    worktree_path=None,
-                    status=WorkerStatus.RUNNING,
-                    pid=None,
-                    start_time=datetime.now(),
-                    end_time=None,
-                    stdout="",
-                    stderr="",
-                    exit_code=None,
-                    result_summary=None,
-                    changed_files=[],
-                    error=None,
-                )
-                await registry.register(f"worker-{i}", execution)
-
-            active = await registry.get_active()
-            assert len(active) == 3
-
-        asyncio.get_event_loop().run_until_complete(test())
-
-    def test_get_nonexistent_worker(self):
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_worker(self):
         """Test getting a nonexistent worker returns None."""
         from junie_adapter import WorkerRegistry
 
-        async def test():
-            registry = WorkerRegistry()
-            found = await registry.get("nonexistent")
-            assert found is None
-
-        asyncio.get_event_loop().run_until_complete(test())
+        registry = WorkerRegistry()
+        found = await registry.get("nonexistent")
+        assert found is None
 
     def test_get_worker_registry_singleton(self):
         """Test that get_worker_registry returns the same instance."""
@@ -1021,23 +1001,20 @@ class TestWorkerRegistry:
 class TestStreaming:
     """Test streaming response helpers."""
 
-    def test_stream_progress_events(self):
+    @pytest.mark.asyncio
+    async def test_stream_progress_events(self):
         """Test stream_progress emits correct event order."""
         from junie_adapter.service import stream_progress
 
-        async def collect():
-            events = []
-            async for chunk in stream_progress(
-                improved_prompt="Test prompt",
-                junie_answer="Test answer",
-                fallback=False,
-                error_reason="",
-                raw_prompt="Test prompt",
-            ):
-                events.append(chunk)
-            return events
-
-        events = asyncio.get_event_loop().run_until_complete(collect())
+        events = []
+        async for chunk in stream_progress(
+            improved_prompt="Test prompt",
+            junie_answer="Test answer",
+            fallback=False,
+            error_reason="",
+            raw_prompt="Test prompt",
+        ):
+            events.append(chunk)
 
         # First event should be progress
         assert "event: progress" in events[0]
@@ -1046,17 +1023,14 @@ class TestStreaming:
         # Last event should be [DONE]
         assert "[DONE]" in events[-1]
 
-    def test_stream_busy_event(self):
+    @pytest.mark.asyncio
+    async def test_stream_busy_event(self):
         """Test stream_busy_event emits busy status."""
         from junie_adapter.service import stream_busy_event
 
-        async def collect():
-            events = []
-            async for chunk in stream_busy_event():
-                events.append(chunk)
-            return events
-
-        events = asyncio.get_event_loop().run_until_complete(collect())
+        events = []
+        async for chunk in stream_busy_event():
+            events.append(chunk)
 
         # Should contain busy status
         combined = "\n".join(events)

@@ -306,3 +306,225 @@ class TestLiveJunieIntegration:
     async def test_live_execution(self):
         """Test execution against a real Junie CLI if available."""
         pytest.skip("Live Junie integration test — requires JUNIE_BIN env var")
+
+
+class TestPersistentStoreIntegration:
+    """Test that execute_worker persists task records to the PersistentStore."""
+
+    @pytest.mark.asyncio
+    async def test_persists_queued_and_completed(self, config: OrchestratorConfig):
+        """Test that task is persisted as queued then completed."""
+        from junie_adapter.persistent_store import PersistentStore
+
+        store = PersistentStore(":memory:")
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ):
+            result = await execute_worker(
+                task_description="Persisted task",
+                config=config,
+                worker_id="worker-persist-1",
+                task_id="task-persist-1",
+                store=store,
+            )
+
+        assert result.status == WorkerStatus.COMPLETED
+
+        # Verify task is in the store
+        task = store.get_task("task-persist-1")
+        assert task is not None
+        assert task.id == "task-persist-1"
+        assert task.worker_id == "worker-persist-1"
+        assert task.status == "completed"
+        assert task.task_description == "Persisted task"
+        assert task.duration_seconds >= 0.0
+
+    @pytest.mark.asyncio
+    async def test_persists_with_parent_task_id(self, config: OrchestratorConfig):
+        """Test that task with parent_task_id is persisted correctly."""
+        from junie_adapter.persistent_store import PersistentStore
+
+        store = PersistentStore(":memory:")
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ):
+            result = await execute_worker(
+                task_description="Persisted task with parent",
+                config=config,
+                worker_id="worker-persist-parent",
+                task_id="task-persist-parent",
+                parent_task_id="parent-task-1",
+                store=store,
+            )
+
+        assert result.status == WorkerStatus.COMPLETED
+        assert result.parent_task_id == "parent-task-1"
+
+        # Verify task is in the store
+        task = store.get_task("task-persist-parent")
+        assert task is not None, "Task not found in store"
+        assert task.parent_task_id == "parent-task-1", f"Expected 'parent-task-1', got {task.parent_task_id!r}"
+
+    @pytest.mark.asyncio
+    async def test_persists_failed_status(self, config: OrchestratorConfig):
+        """Test that a failed task is persisted with FAILED status."""
+        from junie_adapter.persistent_store import PersistentStore
+
+        store = PersistentStore(":memory:")
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ):
+            config.junie_bin = "/nonexistent/junie"
+            result = await execute_worker(
+                task_description="Failing persisted task",
+                config=config,
+                worker_id="worker-persist-2",
+                task_id="task-persist-2",
+                store=store,
+            )
+
+        assert result.status == WorkerStatus.FAILED
+
+        task = store.get_task("task-persist-2")
+        assert task is not None
+        assert task.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_persists_timed_out_status(self, config: OrchestratorConfig):
+        """Test that a timed out task is persisted with TIMED_OUT status."""
+        from junie_adapter.persistent_store import PersistentStore
+
+        store = PersistentStore(":memory:")
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ), patch(
+            "junie_adapter.junie_runner.run_junie_task",
+            new=AsyncMock(side_effect=asyncio.TimeoutError())
+        ):
+            result = await execute_worker(
+                task_description="Timed out task",
+                config=config,
+                worker_id="worker-persist-3",
+                task_id="task-persist-3",
+                timeout=0.1,
+                store=store,
+            )
+
+        assert result.status == WorkerStatus.TIMED_OUT
+
+        task = store.get_task("task-persist-3")
+        assert task is not None
+        assert task.status == "timed_out"
+        assert task.error is not None
+        assert "Timeout" in task.error
+
+    @pytest.mark.asyncio
+    async def test_no_store_skips_persistence(self, config: OrchestratorConfig):
+        """Test that execution works normally when no store is provided."""
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ):
+            result = await execute_worker(
+                task_description="No store task",
+                config=config,
+                worker_id="worker-persist-4",
+                task_id="task-persist-4",
+                store=None,
+            )
+
+        assert result.status == WorkerStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_persists_changed_files(self, config: OrchestratorConfig, tmp_path: Path):
+        """Test that changed files are persisted correctly."""
+        from junie_adapter.persistent_store import PersistentStore
+        from junie_adapter.models import RunResult, TaskStatus
+
+        store = PersistentStore(":memory:")
+
+        _init_git_repo(config.workspace_dir)
+
+        mock_info = MagicMock()
+        mock_info.worktree_path = tmp_path / "worktree"
+        mock_info.worktree_path.mkdir(parents=True, exist_ok=True)
+
+        mock_result = RunResult(
+            task="Test with changed files",
+            answer="Changed files answer",
+            status=TaskStatus.COMPLETED,
+            error=None,
+            duration_seconds=1.0,
+        )
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=True
+        ), patch(
+            "junie_adapter.worker_executor.create_worktree", return_value=mock_info
+        ), patch(
+            "junie_adapter.worktree_manager.get_changed_files",
+            return_value=["file1.py", "file2.py"]
+        ), patch(
+            "junie_adapter.junie_runner.run_junie_task",
+            new=AsyncMock(return_value=mock_result)
+        ):
+            result = await execute_worker(
+                task_description="Test with changed files",
+                config=config,
+                worker_id="worker-persist-6",
+                task_id="task-persist-6",
+                store=store,
+            )
+
+        task = store.get_task("task-persist-6")
+        assert task is not None
+        assert task.changed_files == ["file1.py", "file2.py"]
+
+    @pytest.mark.asyncio
+    async def test_store_error_does_not_break_execution(self, config: OrchestratorConfig):
+        """Test that a store error doesn't break task execution."""
+        from junie_adapter.persistent_store import PersistentStore
+
+        store = PersistentStore(":memory:")
+        # Break the store by replacing save_task with a failing mock
+        store.save_task = lambda task: (_ for _ in ()).throw(RuntimeError("DB error"))
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ):
+            result = await execute_worker(
+                task_description="Store error task",
+                config=config,
+                worker_id="worker-persist-7",
+                task_id="task-persist-7",
+                store=store,
+            )
+
+        # Should still complete successfully despite store errors
+        assert result.status == WorkerStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_execute_worker_and_cleanup_passes_store(self, config: OrchestratorConfig):
+        """Test that execute_worker_and_cleanup passes the store through."""
+        from junie_adapter.persistent_store import PersistentStore
+
+        store = PersistentStore(":memory:")
+
+        with patch(
+            "junie_adapter.worker_executor.validate_git_repo", return_value=False
+        ):
+            result = await execute_worker_and_cleanup(
+                task_description="Cleanup with store",
+                config=config,
+                worker_id="worker-persist-8",
+                task_id="task-persist-8",
+                store=store,
+            )
+
+        assert result.status == WorkerStatus.COMPLETED
+        task = store.get_task("task-persist-8")
+        assert task is not None
+        assert task.status == "completed"

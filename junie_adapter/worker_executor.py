@@ -7,6 +7,7 @@ This module is opt-in — the existing run_junie_task() API is unchanged.
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -26,6 +27,33 @@ from .worktree_manager import (
     remove_worktree,
     validate_git_repo,
 )
+
+
+def _worker_execution_to_task_record(execution: WorkerExecution):
+    """Convert a WorkerExecution to a TaskRecord for persistence."""
+    from .persistent_store import TaskRecord
+    duration = 0.0
+    if execution.end_time and execution.start_time:
+        duration = (execution.end_time - execution.start_time).total_seconds()
+    return TaskRecord(
+        id=execution.task_id,
+        project_id=None,
+        worker_id=execution.worker_id,
+        parent_task_id=execution.parent_task_id,
+        task_description=execution.task_description,
+        project_path=execution.project_path,
+        worktree_path=execution.worktree_path,
+        status=execution.status.value,
+        exit_code=execution.exit_code,
+        stdout=execution.stdout,
+        stderr=execution.stderr,
+        result_summary=execution.result_summary,
+        changed_files=json.dumps(execution.changed_files) if execution.changed_files else "[]",
+        error=execution.error,
+        duration_seconds=duration,
+        start_time=execution.start_time,
+        end_time=execution.end_time,
+    )
 
 runs_logger = logging.getLogger("runs")
 
@@ -172,6 +200,7 @@ async def execute_worker(
     use_worktree: bool = True,
     timeout: Optional[int] = None,
     output_limit: int = DEFAULT_OUTPUT_LIMIT,
+    store: Optional["PersistentStore"] = None,
 ) -> WorkerExecution:
     """Execute a single worker task with optional worktree isolation.
 
@@ -187,6 +216,9 @@ async def execute_worker(
         use_worktree: Whether to use worktree isolation. Defaults to True.
         timeout: Per-task timeout in seconds. Defaults to config.junie_timeout.
         output_limit: Maximum output size in bytes. Defaults to 10 MB.
+        store: Optional PersistentStore to save task records. If provided,
+            the task will be persisted at each lifecycle stage (queued, running,
+            completed/failed/timed_out).
 
     Returns:
         WorkerExecution with full metadata about the execution.
@@ -225,6 +257,15 @@ async def execute_worker(
         changed_files=[],
         error=None,
     )
+
+    # Persist initial task record as "queued"
+    if store is not None:
+        try:
+            task_record = _worker_execution_to_task_record(initial_execution)
+            store.save_task(task_record)
+            runs_logger.debug(f"Persisted task {task_id} as queued")
+        except Exception as e:
+            runs_logger.warning(f"Failed to persist task {task_id} as queued: {e}")
 
     try:
         # Handle isolation mode
@@ -266,6 +307,15 @@ async def execute_worker(
         # Register worker in the registry
         initial_execution.worktree_path = str(worktree_info.worktree_path) if worktree_info else None
         await _worker_registry.register(worker_id, initial_execution)
+
+        # Persist task as "running"
+        if store is not None:
+            try:
+                running_record = _worker_execution_to_task_record(initial_execution)
+                store.save_task(running_record)
+                runs_logger.debug(f"Persisted task {task_id} as running")
+            except Exception as e:
+                runs_logger.warning(f"Failed to persist task {task_id} as running: {e}")
 
         # Run the Junie task with timeout
         try:
@@ -316,6 +366,16 @@ async def execute_worker(
                 error=result.error,
             )
             await _worker_registry.complete(worker_id, final_result)
+
+            # Persist final task record
+            if store is not None:
+                try:
+                    final_record = _worker_execution_to_task_record(final_result)
+                    store.save_task(final_record)
+                    runs_logger.debug(f"Persisted task {task_id} as {worker_status.value}")
+                except Exception as e:
+                    runs_logger.warning(f"Failed to persist task {task_id} as {worker_status.value}: {e}")
+
             return final_result
 
         except asyncio.TimeoutError:
@@ -342,6 +402,16 @@ async def execute_worker(
                 error=f"Timeout after {timeout}s",
             )
             await _worker_registry.complete(worker_id, timeout_result)
+
+            # Persist timeout task record
+            if store is not None:
+                try:
+                    timeout_record = _worker_execution_to_task_record(timeout_result)
+                    store.save_task(timeout_record)
+                    runs_logger.debug(f"Persisted task {task_id} as timed_out")
+                except Exception as e:
+                    runs_logger.warning(f"Failed to persist task {task_id} as timed_out: {e}")
+
             return timeout_result
 
     finally:
@@ -365,6 +435,7 @@ async def execute_worker_and_cleanup(
     use_worktree: bool = True,
     timeout: Optional[int] = None,
     output_limit: int = DEFAULT_OUTPUT_LIMIT,
+    store: Optional["PersistentStore"] = None,
 ) -> WorkerExecution:
     """Execute a worker task and automatically clean up the worktree.
 
@@ -380,6 +451,7 @@ async def execute_worker_and_cleanup(
         use_worktree: Whether to use worktree isolation.
         timeout: Per-task timeout in seconds.
         output_limit: Maximum output size in bytes.
+        store: Optional PersistentStore to save task records.
 
     Returns:
         WorkerExecution with full metadata.
@@ -393,6 +465,7 @@ async def execute_worker_and_cleanup(
         use_worktree=use_worktree,
         timeout=timeout,
         output_limit=output_limit,
+        store=store,
     )
 
     # Clean up worktree if it was created

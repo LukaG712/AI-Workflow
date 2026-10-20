@@ -130,7 +130,8 @@ class TestJunieAdapter:
             adapter = JunieAdapter(config=config)
             assert adapter.check_health() is True
 
-    def test_get_changed_files_empty(self):
+    @pytest.mark.asyncio
+    async def test_get_changed_files_empty(self):
         """Test get_changed_files returns empty list for clean repo."""
         with tempfile.TemporaryDirectory() as tmp:
             # Initialize a Git repo
@@ -142,38 +143,34 @@ class TestJunieAdapter:
             os.system(f"cd {tmp} && git add . && git commit -m 'init' > /dev/null 2>&1")
 
             adapter = JunieAdapter(workspace_path=tmp)
-            files = asyncio.get_event_loop().run_until_complete(
-                adapter.get_changed_files(tmp)
-            )
+            files = await adapter.get_changed_files(tmp)
             assert files == []
 
-    def test_get_changed_files_non_git(self):
+    @pytest.mark.asyncio
+    async def test_get_changed_files_non_git(self):
         """Test get_changed_files returns empty list for non-Git directory."""
         with tempfile.TemporaryDirectory() as tmp:
             adapter = JunieAdapter(workspace_path=tmp)
-            files = asyncio.get_event_loop().run_until_complete(
-                adapter.get_changed_files(tmp)
-            )
+            files = await adapter.get_changed_files(tmp)
             # Should not raise, returns empty list
             assert isinstance(files, list)
 
-    def test_cleanup_worktree_nonexistent(self):
+    @pytest.mark.asyncio
+    async def test_cleanup_worktree_nonexistent(self):
         """Test cleanup_worktree returns False for nonexistent path."""
         adapter = JunieAdapter(workspace_path=tempfile.gettempdir())
-        result = asyncio.get_event_loop().run_until_complete(
-            adapter.cleanup_worktree("/nonexistent/worktree")
-        )
+        result = await adapter.cleanup_worktree("/nonexistent/worktree")
         assert result is False
 
-    def test_cancel_task(self):
+    @pytest.mark.asyncio
+    async def test_cancel_task(self):
         """Test cancel_task returns False (Junie CLI doesn't support cancellation)."""
         adapter = JunieAdapter(workspace_path=tempfile.gettempdir())
-        result = asyncio.get_event_loop().run_until_complete(
-            adapter.cancel_task("worker-1")
-        )
+        result = await adapter.cancel_task("worker-1")
         assert result is False
 
-    def test_submit_task_with_mock(self):
+    @pytest.mark.asyncio
+    async def test_submit_task_with_mock(self):
         """Test submit_task with mocked execute_worker."""
         with tempfile.TemporaryDirectory() as tmp:
             adapter = JunieAdapter(workspace_path=tmp)
@@ -210,16 +207,15 @@ class TestJunieAdapter:
                 "junie_adapter.worker_executor.execute_worker",
                 new=AsyncMock(return_value=mock_result),
             ):
-                result = asyncio.get_event_loop().run_until_complete(
-                    adapter.submit_task(request)
-                )
+                result = await adapter.submit_task(request)
 
             assert isinstance(result, AdapterResult)
             assert result.status == WorkerStatus.COMPLETED
             assert result.output == "Test output"
             assert result.worker_id == request.worker_id
 
-    def test_submit_task_error_handling(self):
+    @pytest.mark.asyncio
+    async def test_submit_task_error_handling(self):
         """Test submit_task returns FAILED status on exception."""
         with tempfile.TemporaryDirectory() as tmp:
             adapter = JunieAdapter(workspace_path=tmp)
@@ -233,9 +229,7 @@ class TestJunieAdapter:
                 "junie_adapter.worker_executor.execute_worker",
                 new=AsyncMock(side_effect=RuntimeError("Test error")),
             ):
-                result = asyncio.get_event_loop().run_until_complete(
-                    adapter.submit_task(request)
-                )
+                result = await adapter.submit_task(request)
 
             assert result.status == WorkerStatus.FAILED
             assert "Test error" in result.error

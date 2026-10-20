@@ -73,6 +73,11 @@ from .adapter import (
     AdapterResult,
     JunieAdapter,
 )
+from .persistent_store import (
+    PersistentStore,
+    ProjectRecord,
+    TaskRecord,
+)
 
 __all__ = [
     # Config
@@ -115,4 +120,8 @@ __all__ = [
     "AdapterRequest",
     "AdapterResult",
     "JunieAdapter",
+    # Persistent storage
+    "PersistentStore",
+    "ProjectRecord",
+    "TaskRecord",
 ]

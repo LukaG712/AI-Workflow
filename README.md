@@ -1,18 +1,22 @@
-# Junie Adapter
+# JunieHub
 
-A modular Python package for integrating [Junie CLI](https://github.com/jetbrains/Junie) execution with Git worktree isolation, optional Ollama-based prompt refinement, session logging, pluggable context providers, and optional Obsidian vault integration.
+**JunieHub** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [AgentHub](https://github.com/LukaG712/AgentHub). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
 
-Designed for use with [AgentHub](https://github.com/LukaG712/AgentHub) as a reliable, reusable coding-agent execution backend. Also works as a standalone HTTP service compatible with Open WebUI.
+Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-compatible clients.
 
 ## Key Features
 
 - **Git worktree isolation** — Each worker runs in its own isolated Git branch, preventing interference with the main checkout or other workers.
+- **Persistent task storage** — SQLite-based storage for tasks, projects, sessions, and worker history with versioned schema migrations.
+- **Comprehensive REST API** — Health checks, task management, project registration, worker status, session history, and queue monitoring.
 - **Stable adapter interface** — Clean typed API (`JunieAdapter`) for AgentHub integration without importing private details.
+- **Security hardened** — Constant-time auth comparison, input validation, safe subprocess invocation, path validation.
 - **Comprehensive changed-file detection** — Reports modified, added, deleted, renamed, staged, unstaged, and untracked files with diff content.
 - **Pluggable context providers** — Load context from MEMORY.md, session logs, vault maps, or custom sources.
 - **Honest streaming** — SSE events clearly distinguish progress updates from token output.
 - **Configurable concurrency** — Default `max_concurrent_workers=1` per JUNIE-3394, with optional override.
 - **Optional dependencies** — Obsidian and Ollama are fully optional; the service starts without them.
+- **CI/CD ready** — GitHub Actions workflow for testing across Python versions and linting.
 
 ## Quick Start
 
@@ -157,14 +161,58 @@ All settings are loaded from environment variables. See `.env.example` for the f
 
 The Python package, HTTP service, and Git worktree isolation work on all platforms. Junie CLI execution requires a Linux or macOS environment.
 
-## HTTP API
+## REST API
 
-The HTTP service provides an OpenAI-compatible interface for integration with Open WebUI or similar clients.
+JunieHub provides a comprehensive REST API for task management, monitoring, and AgentHub integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
 
-### Endpoints
+### Health & Status
 
-- `GET /v1/models` — List available models (returns `junie-workflow`)
-- `POST /v1/chat/completions` — Execute a task through Junie
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Basic health check (no auth required) |
+| `GET /ready` | Readiness check — verifies config and database are initialized |
+
+### Projects
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/projects` | List all registered projects |
+| `POST /api/v1/projects` | Register a new project (`{"id": "...", "name": "...", "path": "..."}`) |
+
+### Tasks
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/tasks` | List tasks with optional `?project_id=`, `?status=`, `?limit=`, `?offset=` filters |
+| `GET /api/v1/tasks/{task_id}` | Get a specific task by ID, including output, changed files, and diff |
+
+### Workers
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/workers` | List all active workers and their status |
+| `GET /api/v1/workers/{worker_id}` | Get a specific worker by ID |
+
+### Sessions
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/sessions` | List session records with optional `?task_id=` and `?limit=` filters |
+
+### Queue & Concurrency
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/queue` | Get queue status, active worker count, and concurrency limits |
+
+### OpenAI-Compatible Endpoints
+
+The following endpoints maintain backward compatibility with OpenAI clients (e.g., Open WebUI):
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /v1/models` | List available models (returns `junie-workflow`) |
+| `POST /v1/chat/completions` | Execute a task through Junie |
 
 ### Authentication
 
@@ -538,7 +586,7 @@ pytest tests/ -v
 pytest tests/test_orchestrator.py::TestConfig -v
 ```
 
-The test suite uses mocks for external processes and HTTP requests. No live Junie installation or Ollama instance is required. **114 tests pass** (1 skipped), covering:
+The test suite uses mocks for external processes and HTTP requests. No live Junie installation or Ollama instance is required. **172 tests pass** (2 skipped), covering:
 
 - **Worktree creation** — Real Git branches, collision handling, dirty main tree preservation, safe cleanup
 - **Changed-file detection** — Modified, added, deleted, renamed, staged, unstaged, and untracked files
@@ -592,18 +640,55 @@ Optional Linux deployment helpers (not required for module usage):
 - `start.sh` — Start the HTTP service
 - `install_service.sh` — Install as a systemd service
 
-## Migration from Monolith
+## Migration from JunieOrchestrator
 
-The old `orchestrator.py` (690 lines) is now a thin 17-line entry point that imports from `junie_adapter.service`. Existing `uvicorn orchestrator:app` commands continue to work.
+JunieHub was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
 
-### Breaking Changes
+### What Changed
 
-- **`VAULT_PATH` no longer falls back to `WORKSPACE_PATH`** — These are independent settings.
-- **`REFINE_PROMPT` defaults to `false`** — Prompt refinement is opt-in.
-- **Module-level globals replaced** — Use dependency injection via `OrchestratorConfig`.
-- **Worktrees use real branches** — Changed from detached HEAD to named branches.
-- **Streaming is post-completion** — SSE events clearly distinguish progress from token output.
-- **Default concurrency is 1** — Enforced via `MAX_CONCURRENT_WORKERS`.
+- **Product name** — Changed from "Junie Orchestrator" to "JunieHub" in documentation, log messages, and service descriptions.
+- **Persistent storage** — New SQLite-based storage for tasks, projects, sessions, and workers. Configured via `JUNIEHUB_DB_PATH` (defaults to `WORKSPACE_PATH/juniehub.db`).
+- **Expanded API** — New endpoints: `/health`, `/ready`, `/api/v1/projects`, `/api/v1/tasks`, `/api/v1/workers`, `/api/v1/sessions`, `/api/v1/queue`.
+- **Security** — Bearer token auth now uses constant-time comparison (`hmac.compare_digest`).
+- **Python 3.14** — All tests updated for Python 3.14 compatibility (removed deprecated `asyncio.get_event_loop()`).
+- **CI/CD** — GitHub Actions workflow for testing across Python 3.10–3.13 and linting.
+- **Systemd service** — Service name changed from `junie-orchestrator` to `juniehub`.
+
+### Backward Compatibility
+
+- **`junie_adapter` package** — All existing imports continue to work.
+- **`orchestrator.py`** — The thin entry point still works: `uvicorn orchestrator:app`.
+- **Environment variables** — All existing variables are preserved; new ones are optional.
+- **OpenAI endpoints** — `/v1/models` and `/v1/chat/completions` are unchanged.
+- **`.env` file** — Existing `.env` files work without modification.
+
+### Migration Steps
+
+1. **Update the systemd service** (if using `install_service.sh`):
+   ```bash
+   # Stop the old service
+   sudo systemctl stop junie-orchestrator
+   sudo systemctl disable junie-orchestrator
+
+   # Reinstall with the new name
+   sudo ./install_service.sh
+   ```
+
+2. **Add new environment variables** (optional):
+   ```bash
+   # Add to .env if you want persistent storage
+   JUNIEHUB_DB_PATH=/path/to/juniehub.db
+   ```
+
+3. **Update API clients** — The new `/api/v1/*` endpoints are additive; existing `/v1/*` endpoints are unchanged.
+
+### Repository Rename
+
+The GitHub repository may need to be renamed separately from `JunieOrchestrator` to `JunieHub`. This is a manual step in GitHub settings. After renaming, update your local clone:
+
+```bash
+git remote set-url origin https://github.com/LukaG712/JunieHub.git
+```
 
 ## License
 

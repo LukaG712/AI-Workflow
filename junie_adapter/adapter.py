@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from .config import IsolationMode, OrchestratorConfig
 from .models import WorkerStatus
+from .persistent_store import PersistentStore
 from .worktree_manager import (
     FileDiff,
     get_changed_files,
@@ -119,18 +120,25 @@ class JunieAdapter:
         ```
     """
 
-    def __init__(self, config: Optional[OrchestratorConfig] = None, **config_kwargs):
+    def __init__(
+        self,
+        config: Optional[OrchestratorConfig] = None,
+        store: Optional[PersistentStore] = None,
+        **config_kwargs,
+    ):
         """Initialize the adapter with configuration.
 
         Args:
             config: Optional OrchestratorConfig instance. If not provided,
                 one will be created from config_kwargs.
+            store: Optional PersistentStore for persisting task records.
             **config_kwargs: Keyword arguments passed to OrchestratorConfig.
         """
         if config:
             self._config = config
         else:
             self._config = OrchestratorConfig(**config_kwargs)
+        self._store = store
 
     def check_health(self) -> bool:
         """Check if the adapter and its dependencies are available.
@@ -188,6 +196,7 @@ class JunieAdapter:
                 parent_task_id=request.parent_task_id,
                 use_worktree=request.use_worktree,
                 timeout=request.timeout,
+                store=self._store,
             )
 
             duration = time.time() - start_time

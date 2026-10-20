@@ -59,14 +59,14 @@ echo "Service port: $PORT"
 
 # ── Build the systemd service file ────────────────────────────────────────────
 
-SERVICE_NAME="junie-orchestrator"
+SERVICE_NAME="juniehub"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 VENV_UVICORN="$SCRIPT_DIR/.venv/bin/uvicorn"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Junie Orchestrator Service
+Description=JunieHub — coding-agent orchestration backend
 After=network.target
 
 [Service]
@@ -78,6 +78,8 @@ EnvironmentFile=$SCRIPT_DIR/.env
 ExecStart=$VENV_UVICORN orchestrator:app --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
