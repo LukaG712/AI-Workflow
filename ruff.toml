@@ -1,0 +1,10 @@
+target-version = "py310"
+exclude = [".junie", ".git", "__pycache__", "*.md"]
+
+[lint]
+# Broad Exception catches are intentional in an orchestration system where
+# we need to catch any failure from external subprocesses and services.
+# Try-except-pass is used intentionally for non-critical cleanup paths.
+# Subprocess.run in async tests is acceptable for short git init commands.
+# PLW1510: subprocess.run without check is fine for test setup where we don't need to fail on error.
+ignore = ["BLE001", "S110", "ASYNC221", "PLW1510"]
