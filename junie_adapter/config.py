@@ -1,13 +1,13 @@
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 
 class IsolationMode(Enum):
     """Worktree isolation mode for worker execution."""
+
     WORKTREE = "worktree"  # Use worktree isolation when Git is available
     NONE = "none"  # No isolation, run in the project directory
     REQUIRED = "required"  # Require worktree isolation, raise if not a Git repo
@@ -18,14 +18,14 @@ class OrchestratorConfig:
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "gemma4:12b"
     refine_prompt: bool = False
-    workspace_path: Optional[str] = None
-    vault_path: Optional[str] = None
+    workspace_path: str | None = None
+    vault_path: str | None = None
     mirror_logs_to_vault: bool = False
     api_key: str = ""
     junie_timeout: int = 1800
     port: int = 8000
     junie_bin: str = "junie"
-    vault_map_path: Optional[str] = None
+    vault_map_path: str | None = None
     max_concurrent_workers: int = 1  # JUNIE-3394: one session per project
     isolation_mode: IsolationMode = IsolationMode.WORKTREE
 
@@ -66,7 +66,8 @@ class OrchestratorConfig:
             refine_prompt=os.getenv("REFINE_PROMPT", "false").lower() == "true",
             workspace_path=workspace_path,
             vault_path=vault_env,
-            mirror_logs_to_vault=os.getenv("MIRROR_LOGS_TO_VAULT", "false").lower() == "true",
+            mirror_logs_to_vault=os.getenv("MIRROR_LOGS_TO_VAULT", "false").lower()
+            == "true",
             api_key=os.getenv("API_KEY", ""),
             junie_timeout=int(os.getenv("JUNIE_TIMEOUT", "1800")),
             port=int(os.getenv("PORT", "8000")),
@@ -97,10 +98,6 @@ class OrchestratorConfig:
                 "Set WORKSPACE_PATH to a valid directory."
             )
         if not ws.is_dir():
-            raise RuntimeError(
-                f"Workspace path is not a directory: {ws}"
-            )
+            raise RuntimeError(f"Workspace path is not a directory: {ws}")
         if not os.access(ws, os.W_OK):
-            raise RuntimeError(
-                f"Workspace path is not writable: {ws}"
-            )
+            raise RuntimeError(f"Workspace path is not writable: {ws}")

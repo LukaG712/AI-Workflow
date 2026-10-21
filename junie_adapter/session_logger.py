@@ -1,10 +1,7 @@
 import logging
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 from .config import OrchestratorConfig
-from .models import SessionLog, TaskStatus
+from .models import SessionLog
 from .obsidian import mirror_to_vault
 from .prompt_refiner import ollama_chat
 
@@ -20,7 +17,10 @@ async def log_session(session_log: SessionLog, config: OrchestratorConfig) -> No
     log_file = session_logs_dir / f"session-{timestamp}.md"
 
     # Build the summary content
-    if session_log.refined_prompt and session_log.refined_prompt != session_log.raw_prompt:
+    if (
+        session_log.refined_prompt
+        and session_log.refined_prompt != session_log.raw_prompt
+    ):
         summary_content = (
             f"# Session {timestamp}\n\n"
             f"**Original prompt:** {session_log.raw_prompt}\n\n"
@@ -46,14 +46,19 @@ async def log_session(session_log: SessionLog, config: OrchestratorConfig) -> No
         )
         system = "You are a technical assistant that writes concise session summaries."
         summary = await ollama_chat(
-            [{"role": "system", "content": system}, {"role": "user", "content": summary_prompt}],
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": summary_prompt},
+            ],
             config,
             try_think=False,
         )
         if summary.strip():
             summary_content = summary.strip()
     except Exception as e:
-        runs_logger.warning(f"Ollama summary generation failed: {e}. Using fallback summary.")
+        runs_logger.warning(
+            f"Ollama summary generation failed: {e}. Using fallback summary."
+        )
 
     # Save the summary
     try:

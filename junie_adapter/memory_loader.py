@@ -13,8 +13,6 @@ New code should prefer `ContextProvider` implementations directly:
 """
 
 import logging
-from pathlib import Path
-from typing import Optional
 
 from .config import OrchestratorConfig
 

@@ -9,8 +9,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import run, PIPE, CalledProcessError
-from typing import List, Optional
+from subprocess import CalledProcessError, run
 
 runs_logger = logging.getLogger("runs")
 
@@ -18,20 +17,20 @@ runs_logger = logging.getLogger("runs")
 @dataclass
 class WorktreeInfo:
     """Metadata about a created Git worktree."""
+
     worktree_path: Path
     branch_name: str
     project_path: Path
     base_commit: str = ""
 
 
-def _run_git(args: List[str], cwd: Optional[Path] = None) -> str:
+def _run_git(args: list[str], cwd: Path | None = None) -> str:
     """Run a Git command and return stdout, raising on failure."""
     try:
         result = run(
             ["git"] + args,
             cwd=str(cwd) if cwd else None,
-            stdout=PIPE,
-            stderr=PIPE,
+            capture_output=True,
             check=True,
         )
         return result.stdout.decode("utf-8", errors="replace").strip()
@@ -114,7 +113,7 @@ def _get_head_commit(project_path: Path) -> str:
 def create_worktree(
     project_path: Path,
     worker_id: str,
-    base_branch: Optional[str] = None,
+    base_branch: str | None = None,
 ) -> WorktreeInfo:
     """Create a Git worktree for an isolated worker execution.
 
@@ -158,7 +157,9 @@ def create_worktree(
     except RuntimeError as e:
         # If the worktree already exists (e.g., from a previous run), try to clean it
         if worktree_dir.exists():
-            runs_logger.warning(f"Worktree directory already exists, removing: {worktree_dir}")
+            runs_logger.warning(
+                f"Worktree directory already exists, removing: {worktree_dir}"
+            )
             try:
                 remove_worktree(worktree_dir)
             except RuntimeError:
@@ -196,7 +197,9 @@ def create_worktree(
     except RuntimeError as validation_err:
         if "not tracked" in str(validation_err):
             raise
-        runs_logger.warning(f"Could not validate worktree registration: {validation_err}")
+        runs_logger.warning(
+            f"Could not validate worktree registration: {validation_err}"
+        )
 
     return WorktreeInfo(
         worktree_path=worktree_dir,
@@ -227,7 +230,7 @@ def cleanup_branch(branch_name: str, project_path: Path) -> bool:
         return False
 
 
-def _is_junie_worktree_path(worktree_path: Path, git_root: Optional[Path] = None) -> bool:
+def _is_junie_worktree_path(worktree_path: Path, git_root: Path | None = None) -> bool:
     """Check if a resolved path is inside the correct .junie-worktrees directory.
 
     Validates that the path is not only named `.junie-worktrees` but actually
@@ -307,8 +310,8 @@ def _is_worktree_dirty(worktree_path: Path) -> bool:
 
 def remove_worktree(
     worktree_path: Path,
-    branch_name: Optional[str] = None,
-    project_path: Optional[Path] = None,
+    branch_name: str | None = None,
+    project_path: Path | None = None,
     force: bool = False,
 ) -> bool:
     """Remove a Git worktree and its associated branch.
@@ -342,7 +345,7 @@ def remove_worktree(
         return False
 
     # Determine the git_root for ownership checks
-    git_root_for_check: Optional[Path] = None
+    git_root_for_check: Path | None = None
     if project_path is not None:
         try:
             git_root_for_check = _get_git_root(project_path).resolve()
@@ -364,7 +367,6 @@ def remove_worktree(
         except RuntimeError as e:
             if "main Git checkout" in str(e):
                 raise
-            pass
 
     # Check for unreviewed changes before allowing removal.
     # Only check if this looks like a valid Git worktree (has .git file).
@@ -423,11 +425,14 @@ def remove_worktree(
             git_file = resolved / ".git"
             if git_file.exists():
                 import shutil
+
                 try:
                     shutil.rmtree(resolved)
                     runs_logger.info(f"Manually removed worktree directory: {resolved}")
                 except Exception as cleanup_err:
-                    runs_logger.error(f"Failed to manually remove worktree: {cleanup_err}")
+                    runs_logger.error(
+                        f"Failed to manually remove worktree: {cleanup_err}"
+                    )
                     raise RuntimeError(
                         f"Failed to remove worktree: {resolved}"
                     ) from cleanup_err
@@ -488,7 +493,7 @@ def _verify_worktree_ownership(item: Path, git_root: Path) -> bool:
     if not content.startswith("gitdir:"):
         return False
 
-    gitdir_value = content[len("gitdir:"):].strip()
+    gitdir_value = content[len("gitdir:") :].strip()
 
     # Resolve the gitdir path to its canonical form
     # It may be relative (to the worktree) or absolute
@@ -518,8 +523,8 @@ def _verify_worktree_ownership(item: Path, git_root: Path) -> bool:
 
 def cleanup_orphaned_worktrees(
     project_path: Path,
-    base_dir: Optional[Path] = None,
-) -> List[Path]:
+    base_dir: Path | None = None,
+) -> list[Path]:
     """Find and remove leftover worktrees from crashed runs.
 
     Scans for worktrees under the `.junie-worktrees` directory that are no
@@ -543,7 +548,9 @@ def cleanup_orphaned_worktrees(
             because the safety of cleanup cannot be verified.
     """
     if not validate_git_repo(project_path):
-        runs_logger.warning(f"Cannot clean up worktrees: {project_path} is not a Git repo.")
+        runs_logger.warning(
+            f"Cannot clean up worktrees: {project_path} is not a Git repo."
+        )
         return []
 
     git_root = _get_git_root(project_path).resolve()
@@ -565,7 +572,7 @@ def cleanup_orphaned_worktrees(
         )
         return []
 
-    cleaned: List[Path] = []
+    cleaned: list[Path] = []
 
     # Get list of all tracked worktrees — essential safety check.
     # If this fails, we cannot safely determine what is orphaned, so abort.
@@ -638,7 +645,7 @@ def cleanup_orphaned_worktrees(
             continue
 
         # Extract and resolve the gitdir path
-        gitdir_value = content[len("gitdir:"):].strip()
+        gitdir_value = content[len("gitdir:") :].strip()
         try:
             gitdir_path = Path(gitdir_value)
             if not gitdir_path.is_absolute():
@@ -672,9 +679,7 @@ def cleanup_orphaned_worktrees(
             # git status will fail on stale worktrees. Check for untracked
             # files by scanning the directory for non-.git files.
             try:
-                has_files = any(
-                    f.name != ".git" for f in item.iterdir()
-                )
+                has_files = any(f.name != ".git" for f in item.iterdir())
                 if has_files:
                     # The orphaned worktree contains files beyond .git.
                     # These could be unreviewed changes — preserve the directory.
@@ -725,6 +730,7 @@ def cleanup_orphaned_worktrees(
         try:
             runs_logger.info(f"Cleaning orphaned worktree: {item}")
             import shutil
+
             shutil.rmtree(item)
             cleaned.append(item)
         except Exception as e:
@@ -739,7 +745,7 @@ def cleanup_orphaned_worktrees(
     return cleaned
 
 
-def _split_git_output(output: str) -> List[str]:
+def _split_git_output(output: str) -> list[str]:
     """Split Git output, handling null-terminated and newline-separated formats."""
     if not output:
         return []
@@ -749,7 +755,7 @@ def _split_git_output(output: str) -> List[str]:
     return [f for f in output.splitlines() if f.strip()]
 
 
-def get_changed_files(worktree_path: Path, base_commit: Optional[str] = None) -> List[str]:
+def get_changed_files(worktree_path: Path, base_commit: str | None = None) -> list[str]:
     """Get the list of all changed files in a worktree.
 
     Reports modified, added, deleted, renamed, staged, unstaged, and untracked files.
@@ -831,13 +837,16 @@ def get_changed_files(worktree_path: Path, base_commit: Optional[str] = None) ->
 @dataclass
 class FileDiff:
     """Structured diff data for a single file."""
+
     file_path: str
     status: str  # M, A, D, R, U (Git status codes)
     diff_content: str
     summary: str
 
 
-def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> List[FileDiff]:
+def get_worker_diff(
+    worktree_path: Path, base_commit: str | None = None
+) -> list[FileDiff]:
     """Get structured diff data for all changed files in a worktree.
 
     Args:
@@ -880,7 +889,9 @@ def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> L
             if file_full_path.exists():
                 try:
                     # Check if the file is tracked (in the index)
-                    _run_git(["ls-files", "--error-unmatch", file_path], cwd=worktree_path)
+                    _run_git(
+                        ["ls-files", "--error-unmatch", file_path], cwd=worktree_path
+                    )
                     # File is tracked — status from diff is correct
                 except RuntimeError:
                     # File is not in the index — it's untracked
@@ -892,7 +903,9 @@ def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> L
             if is_untracked_file and file_full_path.exists():
                 # Untracked file — show content as diff (skip git diff which returns empty)
                 try:
-                    content = file_full_path.read_text(encoding="utf-8", errors="replace")
+                    content = file_full_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
                     # Format as a unified diff against empty
                     lines = content.split("\n")
                     diff_lines = [f"+++ b/{file_path}"]
@@ -923,29 +936,37 @@ def get_worker_diff(worktree_path: Path, base_commit: Optional[str] = None) -> L
             summary = f"{status}: {file_path}"
             if diff_content and not diff_content.startswith("("):
                 lines = diff_content.strip().split("\n")
-                added = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
-                removed = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+                added = sum(
+                    1 for l in lines if l.startswith("+") and not l.startswith("+++")
+                )
+                removed = sum(
+                    1 for l in lines if l.startswith("-") and not l.startswith("---")
+                )
                 summary = f"{status}: {file_path} (+{added}/-{removed})"
 
-            diffs.append(FileDiff(
-                file_path=file_path,
-                status=status,
-                diff_content=diff_content,
-                summary=summary,
-            ))
+            diffs.append(
+                FileDiff(
+                    file_path=file_path,
+                    status=status,
+                    diff_content=diff_content,
+                    summary=summary,
+                )
+            )
         except Exception as e:
             runs_logger.warning(f"Failed to get diff for {file_path}: {e}")
-            diffs.append(FileDiff(
-                file_path=file_path,
-                status="?",
-                diff_content=f"(error: {e})",
-                summary=f"Error getting diff for {file_path}",
-            ))
+            diffs.append(
+                FileDiff(
+                    file_path=file_path,
+                    status="?",
+                    diff_content=f"(error: {e})",
+                    summary=f"Error getting diff for {file_path}",
+                )
+            )
 
     return diffs
 
 
-def get_change_summary(worktree_path: Path, base_commit: Optional[str] = None) -> str:
+def get_change_summary(worktree_path: Path, base_commit: str | None = None) -> str:
     """Get a human-readable summary of changes in a worktree.
 
     Args:

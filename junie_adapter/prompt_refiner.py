@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 import httpx
 
@@ -40,7 +39,12 @@ def build_prompt_system(context: str = "", vault_map_content: str = "") -> str:
     return system
 
 
-async def ollama_chat(messages: list, config: OrchestratorConfig, model: Optional[str] = None, try_think: bool = True) -> str:
+async def ollama_chat(
+    messages: list,
+    config: OrchestratorConfig,
+    model: str | None = None,
+    try_think: bool = True,
+) -> str:
     """Call Ollama /api/chat and return the assistant's message text.
     If try_think is True, sends "think": false and retries without it on HTTP 400."""
     model = model or config.ollama_model
@@ -62,7 +66,9 @@ async def ollama_chat(messages: list, config: OrchestratorConfig, model: Optiona
         if resp.status_code == 400 and try_think:
             text = resp.text.lower()
             if "think" in text:
-                runs_logger.info(f"Ollama returned 400 mentioning thinking, retrying without 'think': false")
+                runs_logger.info(
+                    "Ollama returned 400 mentioning thinking, retrying without 'think': false"
+                )
                 payload.pop("think", None)
                 resp = await client.post(
                     f"{config.ollama_url}/api/chat",
@@ -74,11 +80,14 @@ async def ollama_chat(messages: list, config: OrchestratorConfig, model: Optiona
     return body.get("message", {}).get("content", "")
 
 
-async def ollama_chat_stream(messages: list, config: OrchestratorConfig, model: Optional[str] = None):
+async def ollama_chat_stream(
+    messages: list, config: OrchestratorConfig, model: str | None = None
+):
     """Call Ollama /api/chat with streaming and yield content chunks."""
     model = model or config.ollama_model
-    async with httpx.AsyncClient(timeout=120) as client:
-        async with client.stream(
+    async with (
+        httpx.AsyncClient(timeout=120) as client,
+        client.stream(
             "POST",
             f"{config.ollama_url}/api/chat",
             json={
@@ -86,22 +95,26 @@ async def ollama_chat_stream(messages: list, config: OrchestratorConfig, model: 
                 "messages": messages,
                 "stream": True,
             },
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                try:
-                    import json
-                    chunk = json.loads(line)
-                    content = chunk.get("message", {}).get("content", "")
-                    if content:
-                        yield content
-                except json.JSONDecodeError:
-                    continue
+        ) as resp,
+    ):
+        resp.raise_for_status()
+        async for line in resp.aiter_lines():
+            if not line.strip():
+                continue
+            try:
+                import json
+
+                chunk = json.loads(line)
+                content = chunk.get("message", {}).get("content", "")
+                if content:
+                    yield content
+            except json.JSONDecodeError:
+                continue
 
 
-async def refine_prompt(raw: str, config: OrchestratorConfig, context: str = "", vault_map_content: str = "") -> tuple[str, bool, str]:
+async def refine_prompt(
+    raw: str, config: OrchestratorConfig, context: str = "", vault_map_content: str = ""
+) -> tuple[str, bool, str]:
     """Rewrite a raw prompt using Ollama. Returns (improved_prompt, fallback_flag, error_reason).
     On error, returns (raw, True, reason) where reason describes the specific error."""
     try:
@@ -120,11 +133,11 @@ async def refine_prompt(raw: str, config: OrchestratorConfig, context: str = "",
         reason = f"model '{config.ollama_model}' returned HTTP {status}"
         runs_logger.warning(f"Ollama prompt rewrite failed: {reason}")
         return raw, True, reason
-    except httpx.ConnectError as e:
+    except httpx.ConnectError:
         reason = f"connection to Ollama refused ({config.ollama_url})"
         runs_logger.warning(f"Ollama prompt rewrite failed: {reason}")
         return raw, True, reason
-    except httpx.ConnectTimeout as e:
+    except httpx.ConnectTimeout:
         reason = f"connection to Ollama timed out ({config.ollama_url})"
         runs_logger.warning(f"Ollama prompt rewrite failed: {reason}")
         return raw, True, reason

@@ -7,7 +7,6 @@ vault maps) without coupling core execution to Obsidian or other backends.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Optional
 
 from .config import OrchestratorConfig
 
@@ -28,7 +27,6 @@ class ContextProvider(ABC):
         Returns:
             Context string to prepend to the task prompt. Empty string if no context.
         """
-        pass
 
 
 class EmptyContextProvider(ContextProvider):
@@ -85,22 +83,23 @@ class MemoryFileContextProvider(ContextProvider):
                             content = log_file.read_text(encoding="utf-8").strip()
                             if log_file.suffix == ".json":
                                 import json
+
                                 data = json.loads(content)
                                 prompt = data.get("raw_prompt", "")[:200]
                                 status = data.get("status", "unknown")
-                                session_summaries.append(
-                                    f"- [{status}] {prompt}"
-                                )
+                                session_summaries.append(f"- [{status}] {prompt}")
                             else:
                                 # .md format: use first line as summary
                                 first_line = content.split("\n")[0][:200]
                                 session_summaries.append(f"- {first_line}")
                         except Exception as e:
-                            logger.warning(f"Failed to read session log {log_file}: {e}")
+                            logger.warning(
+                                f"Failed to read session log {log_file}: {e}"
+                            )
 
                     if session_summaries:
                         parts.append(
-                            f"# Recent Sessions\n\n" + "\n".join(session_summaries)
+                            "# Recent Sessions\n\n" + "\n".join(session_summaries)
                         )
             except Exception as e:
                 logger.warning(f"Failed to read session logs: {e}")
@@ -114,7 +113,11 @@ class VaultMapContextProvider(ContextProvider):
     The vault map provides a directory structure overview for navigation.
     """
 
-    def __init__(self, vault_map_path: Optional[str] = None, config: Optional[OrchestratorConfig] = None):
+    def __init__(
+        self,
+        vault_map_path: str | None = None,
+        config: OrchestratorConfig | None = None,
+    ):
         """Initialize with vault map path.
 
         Args:
@@ -153,7 +156,7 @@ class CompositeContextProvider(ContextProvider):
     Loads context from all providers and concatenates the results.
     """
 
-    def __init__(self, providers: List[ContextProvider]):
+    def __init__(self, providers: list[ContextProvider]):
         """Initialize with a list of context providers.
 
         Args:
@@ -170,7 +173,9 @@ class CompositeContextProvider(ContextProvider):
                 if context:
                     parts.append(context)
             except Exception as e:
-                logger.warning(f"Context provider {provider.__class__.__name__} failed: {e}")
+                logger.warning(
+                    f"Context provider {provider.__class__.__name__} failed: {e}"
+                )
 
         return "\n\n---\n\n".join(parts)
 

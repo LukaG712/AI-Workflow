@@ -2,12 +2,11 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import shutil
+import signal
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 from .config import OrchestratorConfig
 from .models import RunResult, TaskStatus
@@ -33,7 +32,15 @@ def parse_junie_json(output: str) -> str:
             return obj
         if isinstance(obj, dict):
             # Try common key names for answer content
-            for key in ("answer", "result", "content", "text", "output", "response", "message"):
+            for key in (
+                "answer",
+                "result",
+                "content",
+                "text",
+                "output",
+                "response",
+                "message",
+            ):
                 if key in obj:
                     val = extract_text(obj[key], depth + 1)
                     if val.strip():
@@ -68,17 +75,24 @@ async def run_junie_task(task: str, config: OrchestratorConfig) -> RunResult:
     junie_path = Path(config.junie_bin)
     if junie_path.suffix == ".py":
         cmd = [
-            sys.executable, str(junie_path),
-            "--task", task,
-            "--project", str(workspace),
-            "--output-format", "json",
+            sys.executable,
+            str(junie_path),
+            "--task",
+            task,
+            "--project",
+            str(workspace),
+            "--output-format",
+            "json",
         ]
     else:
         cmd = [
             config.junie_bin,
-            "--task", task,
-            "--project", str(workspace),
-            "--output-format", "json",
+            "--task",
+            task,
+            "--project",
+            str(workspace),
+            "--output-format",
+            "json",
         ]
 
     retry_delays = [30, 60, 90]
@@ -127,12 +141,17 @@ async def run_junie_task(task: str, config: OrchestratorConfig) -> RunResult:
                     process.communicate(),
                     timeout=config.junie_timeout,
                 )
-                output = (stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")).strip()
+                output = (
+                    stdout.decode("utf-8", errors="replace")
+                    + stderr.decode("utf-8", errors="replace")
+                ).strip()
                 parsed = parse_junie_json(output)
 
                 if has_rate_limit(output):
                     last_error = output
-                    runs_logger.warning(f"Rate limit detected in Junie output (attempt {attempt + 1})")
+                    runs_logger.warning(
+                        f"Rate limit detected in Junie output (attempt {attempt + 1})"
+                    )
                     continue
 
                 duration = time.time() - start_time
@@ -155,7 +174,9 @@ async def run_junie_task(task: str, config: OrchestratorConfig) -> RunResult:
 
             except asyncio.TimeoutError:
                 # Kill the entire process group
-                runs_logger.error(f"Junie timed out after {config.junie_timeout}s, killing process group")
+                runs_logger.error(
+                    f"Junie timed out after {config.junie_timeout}s, killing process group"
+                )
                 try:
                     if sys.platform == "win32":
                         # On Windows, terminate the process tree

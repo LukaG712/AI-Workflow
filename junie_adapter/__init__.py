@@ -37,82 +37,83 @@ AgentHub adapter usage:
     result: AdapterResult = await adapter.submit_task(request)
 """
 
+from .adapter import (
+    AdapterRequest,
+    AdapterResult,
+    JunieAdapter,
+)
 from .config import IsolationMode, OrchestratorConfig
+from .context_provider import (
+    CompositeContextProvider,
+    ContextProvider,
+    EmptyContextProvider,
+    MemoryFileContextProvider,
+    VaultMapContextProvider,
+    create_default_context_provider,
+)
 from .junie_runner import run_junie_task
-from .prompt_refiner import refine_prompt
-from .session_logger import log_session
 from .memory_loader import load_context
 from .models import RunResult, SessionLog, TaskStatus, WorkerExecution, WorkerStatus
+from .persistent_store import (
+    PersistentStore,
+    ProjectRecord,
+    TaskRecord,
+)
+from .prompt_refiner import refine_prompt
+from .session_logger import log_session
 from .worker_executor import (
-    execute_worker,
-    execute_worker_and_cleanup,
     WorkerRegistry,
     WorkerSemaphore,
+    execute_worker,
+    execute_worker_and_cleanup,
     get_worker_registry,
     set_max_concurrent_workers,
 )
 from .worktree_manager import (
     WorktreeInfo,
     create_worktree,
-    get_changed_files,
     get_change_summary,
+    get_changed_files,
     get_worker_diff,
     remove_worktree,
     validate_git_repo,
 )
-from .context_provider import (
-    ContextProvider,
-    EmptyContextProvider,
-    MemoryFileContextProvider,
-    VaultMapContextProvider,
-    CompositeContextProvider,
-    create_default_context_provider,
-)
-from .adapter import (
-    AdapterRequest,
-    AdapterResult,
-    JunieAdapter,
-)
 
 __all__ = [
-    # Config
-    "OrchestratorConfig",
-    "IsolationMode",
-    # Core execution
-    "run_junie_task",
-    "refine_prompt",
-    "log_session",
-    "load_context",
-    # Models
-    "RunResult",
-    "SessionLog",
-    "TaskStatus",
-    "WorkerExecution",
-    "WorkerStatus",
-    # Worker execution
-    "execute_worker",
-    "execute_worker_and_cleanup",
-    "WorkerRegistry",
-    "WorkerSemaphore",
-    "get_worker_registry",
-    "set_max_concurrent_workers",
-    # Worktree management
-    "WorktreeInfo",
-    "create_worktree",
-    "remove_worktree",
-    "validate_git_repo",
-    "get_changed_files",
-    "get_change_summary",
-    "get_worker_diff",
-    # Context providers
-    "ContextProvider",
-    "EmptyContextProvider",
-    "MemoryFileContextProvider",
-    "VaultMapContextProvider",
-    "CompositeContextProvider",
-    "create_default_context_provider",
-    # Adapter interface
     "AdapterRequest",
     "AdapterResult",
+    "CompositeContextProvider",
+    "ContextProvider",
+    "EmptyContextProvider",
+    "IsolationMode",
     "JunieAdapter",
+    "MemoryFileContextProvider",
+    "OrchestratorConfig",
+    "PersistentStore",
+    "ProjectRecord",
+    "RunResult",
+    "SessionLog",
+    "TaskRecord",
+    "TaskStatus",
+    "VaultMapContextProvider",
+    "WorkerExecution",
+    "WorkerRegistry",
+    "WorkerSemaphore",
+    "WorkerStatus",
+    "WorktreeInfo",
+    "create_default_context_provider",
+    "create_worktree",
+    "execute_worker",
+    "execute_worker_and_cleanup",
+    "get_change_summary",
+    "get_changed_files",
+    "get_worker_diff",
+    "get_worker_registry",
+    "load_context",
+    "log_session",
+    "refine_prompt",
+    "remove_worktree",
+    "run_junie_task",
+    "set_max_concurrent_workers",
+    "validate_git_repo",
 ]
