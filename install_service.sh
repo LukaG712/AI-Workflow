@@ -59,14 +59,14 @@ echo "Service port: $PORT"
 
 # ── Build the systemd service file ────────────────────────────────────────────
 
-SERVICE_NAME="Ecton"
+SERVICE_NAME="Polter"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
 VENV_UVICORN="$SCRIPT_DIR/.venv/bin/uvicorn"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Ecton — coding-agent orchestration backend
+Description=Polter — coding-agent orchestration backend
 After=network.target
 
 [Service]

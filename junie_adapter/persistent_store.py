@@ -1,4 +1,4 @@
-"""Persistent SQLite storage layer for Ecton.
+"""Persistent SQLite storage layer for Polter.
 
 Provides a versioned schema for storing projects, tasks, workers, sessions,
 and execution metadata. Supports concurrent access, transactions, and
@@ -52,7 +52,7 @@ class TaskRecord:
 
 
 class PersistentStore:
-    """Thread-safe SQLite storage for Ecton task and session persistence.
+    """Thread-safe SQLite storage for Polter task and session persistence.
 
     Uses WAL mode for concurrent read/write access. Handles schema
     initialization and versioned migrations.

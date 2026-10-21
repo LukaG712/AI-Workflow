@@ -1,6 +1,6 @@
-# Ecton
+# Polter
 
-**Ecton** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [Evershade Valley](https://github.com/LukaG712/Evershade Valley). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
+**Polter** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [Evershade Valley](https://github.com/LukaG712/Evershade Valley). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
 
 Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-compatible clients.
 
@@ -165,7 +165,7 @@ The Python package, HTTP service, and Git worktree isolation work on all platfor
 
 ## REST API
 
-Ecton provides a comprehensive REST API for task management, monitoring, and Evershade Valley integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
+Polter provides a comprehensive REST API for task management, monitoring, and Evershade Valley integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
 
 ### Health & Status
 
@@ -644,17 +644,17 @@ Optional Linux deployment helpers (not required for module usage):
 
 ## Migration from JunieOrchestrator
 
-Ecton was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
+Polter was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
 
 ### What Changed
 
-- **Product name** — Changed from "Junie Orchestrator" to "Ecton" in documentation, log messages, and service descriptions.
-- **Persistent storage** — New SQLite-based storage for tasks, projects, sessions, and workers. Configured via `Ecton_DB_PATH` (defaults to `WORKSPACE_PATH/Ecton.db`).
+- **Product name** — Changed from "Junie Orchestrator" to "Polter" in documentation, log messages, and service descriptions.
+- **Persistent storage** — New SQLite-based storage for tasks, projects, sessions, and workers. Configured via `Polter_DB_PATH` (defaults to `WORKSPACE_PATH/Polter.db`).
 - **Expanded API** — New endpoints: `/health`, `/ready`, `/api/v1/projects`, `/api/v1/tasks`, `/api/v1/workers`, `/api/v1/sessions`, `/api/v1/queue`.
 - **Security** — Bearer token auth now uses constant-time comparison (`hmac.compare_digest`).
 - **Python 3.14** — All tests updated for Python 3.14 compatibility (removed deprecated `asyncio.get_event_loop()`).
 - **CI/CD** — GitHub Actions workflow for testing across Python 3.10–3.13 and linting.
-- **Systemd service** — Service name changed from `junie-orchestrator` to `Ecton`.
+- **Systemd service** — Service name changed from `junie-orchestrator` to `Polter`.
 
 ### Backward Compatibility
 
@@ -679,17 +679,17 @@ Ecton was previously named **JunieOrchestrator**. The package name `junie_adapte
 2. **Add new environment variables** (optional):
    ```bash
    # Add to .env if you want persistent storage
-   Ecton_DB_PATH=/path/to/Ecton.db
+   Polter_DB_PATH=/path/to/Polter.db
    ```
 
 3. **Update API clients** — The new `/api/v1/*` endpoints are additive; existing `/v1/*` endpoints are unchanged.
 
 ### Repository Rename
 
-The GitHub repository may need to be renamed separately from `JunieOrchestrator` to `Ecton`. This is a manual step in GitHub settings. After renaming, update your local clone:
+The GitHub repository may need to be renamed separately from `JunieOrchestrator` to `Polter`. This is a manual step in GitHub settings. After renaming, update your local clone:
 
 ```bash
-git remote set-url origin https://github.com/LukaG712/Ecton.git
+git remote set-url origin https://github.com/LukaG712/Polter.git
 ```
 
 ## License

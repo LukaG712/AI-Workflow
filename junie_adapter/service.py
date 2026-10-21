@@ -33,7 +33,7 @@ class JSONFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
-            "service": "Ecton",
+            "service": "Polter",
         }
         if record.exc_info and record.exc_info[0] is not None:
             log_data["exception"] = self.formatException(record.exc_info)
@@ -94,7 +94,7 @@ async def lifespan(app_instance: FastAPI):
     runs_logger.addHandler(logging.FileHandler(str(runs_log)))
     runs_logger.propagate = False
     # Initialize persistent storage
-    db_path = os.getenv("Ecton_DB_PATH", str(config.workspace_dir / "Ecton.db"))
+    db_path = os.getenv("Polter_DB_PATH", str(config.workspace_dir / "Polter.db"))
     store = PersistentStore(db_path=db_path)
     # Initialize OpenTelemetry tracing
     if tracing_module is not None:
@@ -102,17 +102,17 @@ async def lifespan(app_instance: FastAPI):
             tracing_module.setup_tracing(app_instance)
         except Exception:
             pass  # Tracing is optional
-    runs_logger.info("Ecton started")
+    runs_logger.info("Polter started")
     yield
     if store:
         store.close()
-    runs_logger.info("Ecton shutting down")
+    runs_logger.info("Polter shutting down")
 
 
 app = FastAPI(
-    title="Ecton",
+    title="Polter",
     version="1.0.0",
-    description="Ecton — coding-agent orchestration backend with worktree isolation and SQLite persistence",
+    description="Polter — coding-agent orchestration backend with worktree isolation and SQLite persistence",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -335,7 +335,7 @@ async def stream_from_ollama_progress(messages: list, model: str = "junie-workfl
 @app.get("/health")
 async def health_check():
     """Basic health check — returns 200 if the service is running."""
-    return {"status": "ok", "service": "Ecton"}
+    return {"status": "ok", "service": "Polter"}
 
 
 @app.get("/ready")
@@ -347,7 +347,7 @@ async def readiness_check():
         raise HTTPException(status_code=503, detail="Database not initialized")
     return {
         "status": "ready",
-        "service": "Ecton",
+        "service": "Polter",
         "version": "1.0.0",
         "max_concurrent_workers": config.max_concurrent_workers,
         "isolation_mode": config.isolation_mode.value,
@@ -729,17 +729,17 @@ async def chat_completions(request: Request):
 import sqlite3 as _sqlite3
 import shutil as _shutil
 
-_Ecton_BACKUP_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "backups"
+_Polter_BACKUP_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "backups"
 
 
 @app.post("/api/v1/backup")
 async def create_backup(request: Request):
-    """Create a backup of the Ecton SQLite database."""
+    """Create a backup of the Polter SQLite database."""
     await require_auth(request)
 
-    _Ecton_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    _Polter_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    db_path_str = os.getenv("Ecton_DB_PATH", str(config.workspace_dir / "Ecton.db")) if config else None
+    db_path_str = os.getenv("Polter_DB_PATH", str(config.workspace_dir / "Polter.db")) if config else None
     if not db_path_str:
         raise HTTPException(status_code=500, detail="Database path not configured")
 
@@ -748,8 +748,8 @@ async def create_backup(request: Request):
         raise HTTPException(status_code=404, detail="Database file not found")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_name = f"Ecton_backup_{timestamp}.db"
-    backup_path = _Ecton_BACKUP_DIR / backup_name
+    backup_name = f"Polter_backup_{timestamp}.db"
+    backup_path = _Polter_BACKUP_DIR / backup_name
 
     try:
         source_conn = _sqlite3.connect(str(source_db), timeout=10.0)
@@ -773,14 +773,14 @@ async def create_backup(request: Request):
 
 @app.get("/api/v1/backups")
 async def list_backups(request: Request):
-    """List all available Ecton database backups."""
+    """List all available Polter database backups."""
     await require_auth(request)
 
-    if not _Ecton_BACKUP_DIR.exists():
+    if not _Polter_BACKUP_DIR.exists():
         return {"backups": [], "count": 0}
 
     backups = []
-    for f in sorted(_Ecton_BACKUP_DIR.glob("Ecton_backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for f in sorted(_Polter_BACKUP_DIR.glob("Polter_backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True):
         stat = f.stat()
         backups.append({
             "file": f.name,
