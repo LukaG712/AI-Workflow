@@ -1,3 +1,12 @@
+```
+__________      .__   __                
+\______   \____ |  |_/  |_  ___________ 
+ |     ___/  _ \|  |\   __\/ __ \_  __ \
+ |    |  (  <_> )  |_|  | \  ___/|  | \/
+ |____|   \____/|____/__|  \___  >__|   
+                               \/       
+```
+
 # Polter
 
 **Polter** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [Evershade Valley](https://github.com/LukaG712/Evershade Valley). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
