@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **Git worktree isolation** — Each worker runs in its own isolated Git branch, preventing interference with the main checkout or other workers.
-- **Stable adapter interface** — Clean typed API (`JunieAdapter`) for Polter integration without importing private details.
+- **Stable adapter interface** — Clean typed API (`JunieAdapter`) for Evershade Valley integration without importing private details.
 - **Comprehensive changed-file detection** — Reports modified, added, deleted, renamed, staged, unstaged, and untracked files with diff content.
 - **Pluggable context providers** — Load context from MEMORY.md, session logs, vault maps, or custom sources via the `ContextProvider` protocol.
 - **Honest streaming** — SSE events clearly distinguish progress updates from token output.
@@ -27,4 +27,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Notes
 - Optional dependencies (Obsidian, Ollama) are fully optional; the service starts without them.
 - Requires Python >= 3.10.
-- Designed for use with [Polter](https://github.com/LukaG712/Polter) as a coding-agent execution backend, but also works as a standalone HTTP service compatible with Open WebUI.
+- Designed for use with [Evershade Valley](https://github.com/LukaG712/Evershade Valley) as a coding-agent execution backend, but also works as a standalone HTTP service compatible with Open WebUI.

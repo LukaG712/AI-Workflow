@@ -1,6 +1,6 @@
 """OpenTelemetry tracing for Ecton.
 
-Mirrors Polter's tracing.py but configured for the Ecton service name.
+Mirrors Evershade Valley's tracing.py but configured for the Ecton service name.
 """
 
 import os

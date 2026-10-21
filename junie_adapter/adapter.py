@@ -1,4 +1,4 @@
-"""Stable adapter interface for Polter integration.
+"""Stable adapter interface for Evershade Valley integration.
 
 Provides a clean, documented API for submitting tasks to JunieOrchestrator
 without importing private implementation details.
@@ -88,7 +88,7 @@ class AdapterResult:
 
 
 class JunieAdapter:
-    """Clean adapter interface for Polter to use JunieOrchestrator.
+    """Clean adapter interface for Evershade Valley to use JunieOrchestrator.
 
     This class provides the main entry points for task execution,
     health checking, changed-file reporting, and cleanup.

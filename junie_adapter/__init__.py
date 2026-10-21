@@ -9,7 +9,7 @@ This package provides:
 - An optional FastAPI HTTP service
 - Multi-agent worker execution with Git worktree isolation (opt-in)
 - Pluggable context provider interface
-- Stable adapter interface for Polter integration
+- Stable adapter interface for Evershade Valley integration
 
 Usage:
     from junie_adapter import run_junie_task, OrchestratorConfig
@@ -29,7 +29,7 @@ Multi-agent usage:
         task_id="task-1",
     )
 
-Polter adapter usage:
+Evershade Valley adapter usage:
     from junie_adapter import JunieAdapter, AdapterRequest, AdapterResult
 
     adapter = JunieAdapter(api_key="your-api-key", workspace_path="/path/to/project")

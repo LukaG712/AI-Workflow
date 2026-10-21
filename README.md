@@ -1,6 +1,6 @@
 # Ecton
 
-**Ecton** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [Polter](https://github.com/LukaG712/Polter). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
+**Ecton** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [Evershade Valley](https://github.com/LukaG712/Evershade Valley). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
 
 Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-compatible clients.
 
@@ -11,7 +11,7 @@ Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-co
 - **Git worktree isolation** — Each worker runs in its own isolated Git branch, preventing interference with the main checkout or other workers.
 - **Persistent task storage** — SQLite-based storage for tasks, projects, sessions, and worker history with versioned schema migrations.
 - **Comprehensive REST API** — Health checks, task management, project registration, worker status, session history, and queue monitoring.
-- **Stable adapter interface** — Clean typed API (`JunieAdapter`) for Polter integration without importing private details.
+- **Stable adapter interface** — Clean typed API (`JunieAdapter`) for Evershade Valley integration without importing private details.
 - **Security hardened** — Constant-time auth comparison, input validation, safe subprocess invocation, path validation.
 - **Comprehensive changed-file detection** — Reports modified, added, deleted, renamed, staged, unstaged, and untracked files with diff content.
 - **Pluggable context providers** — Load context from MEMORY.md, session logs, vault maps, or custom sources.
@@ -22,7 +22,7 @@ Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-co
 
 ## Quick Start
 
-### As a Python module (recommended for Polter)
+### As a Python module (recommended for Evershade Valley)
 
 ```python
 from junie_adapter import JunieAdapter, AdapterRequest
@@ -94,7 +94,7 @@ junie_adapter/
 ├── worktree_manager.py   # Git worktree lifecycle, changed-file detection
 ├── worker_executor.py    # Worker execution with isolation and concurrency
 ├── context_provider.py   # Pluggable context provider interface
-└── adapter.py            # Stable adapter interface for Polter
+└── adapter.py            # Stable adapter interface for Evershade Valley
 ```
 
 ### Module Overview
@@ -112,7 +112,7 @@ junie_adapter/
 | `worktree_manager.py` | Git worktree creation (with real branches), changed-file detection, diff reporting |
 | `worker_executor.py` | Worker execution with isolation, concurrency limits, PID tracking, `WorkerRegistry` |
 | `context_provider.py` | Pluggable `ContextProvider` protocol with memory, vault map, and composite implementations |
-| `adapter.py` | `JunieAdapter` class — clean typed interface for Polter integration |
+| `adapter.py` | `JunieAdapter` class — clean typed interface for Evershade Valley integration |
 
 ## Configuration
 
@@ -165,7 +165,7 @@ The Python package, HTTP service, and Git worktree isolation work on all platfor
 
 ## REST API
 
-Ecton provides a comprehensive REST API for task management, monitoring, and Polter integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
+Ecton provides a comprehensive REST API for task management, monitoring, and Evershade Valley integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
 
 ### Health & Status
 
@@ -296,11 +296,11 @@ Prefix a user message with `### Task:` to bypass Junie and send the request dire
 }
 ```
 
-## Polter Integration
+## Evershade Valley Integration
 
 ### Adapter Interface (Recommended)
 
-The `JunieAdapter` class provides a clean, typed interface for Polter:
+The `JunieAdapter` class provides a clean, typed interface for Evershade Valley:
 
 ```python
 from junie_adapter import JunieAdapter, AdapterRequest, AdapterResult
@@ -428,7 +428,7 @@ The registry is automatically updated when `execute_worker` starts and completes
 
 ### Custom Context Injection
 
-Instead of using MEMORY.md, Polter can provide its own context via the pluggable `ContextProvider` interface:
+Instead of using MEMORY.md, Evershade Valley can provide its own context via the pluggable `ContextProvider` interface:
 
 ```python
 from junie_adapter import (
