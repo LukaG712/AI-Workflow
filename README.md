@@ -1,6 +1,6 @@
-# JunieHub
+# Ecton
 
-**JunieHub** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [AgentHub](https://github.com/LukaG712/AgentHub). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
+**Ecton** (formerly JunieOrchestrator) is a production-quality coding-agent orchestration backend designed to integrate with [Polter](https://github.com/LukaG712/Polter). It provides reliable task execution through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent task storage, multi-agent orchestration support, and a comprehensive REST API.
 
 Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-compatible clients.
 
@@ -11,7 +11,7 @@ Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-co
 - **Git worktree isolation** — Each worker runs in its own isolated Git branch, preventing interference with the main checkout or other workers.
 - **Persistent task storage** — SQLite-based storage for tasks, projects, sessions, and worker history with versioned schema migrations.
 - **Comprehensive REST API** — Health checks, task management, project registration, worker status, session history, and queue monitoring.
-- **Stable adapter interface** — Clean typed API (`JunieAdapter`) for AgentHub integration without importing private details.
+- **Stable adapter interface** — Clean typed API (`JunieAdapter`) for Polter integration without importing private details.
 - **Security hardened** — Constant-time auth comparison, input validation, safe subprocess invocation, path validation.
 - **Comprehensive changed-file detection** — Reports modified, added, deleted, renamed, staged, unstaged, and untracked files with diff content.
 - **Pluggable context providers** — Load context from MEMORY.md, session logs, vault maps, or custom sources.
@@ -22,7 +22,7 @@ Also works as a standalone HTTP service compatible with Open WebUI and OpenAI-co
 
 ## Quick Start
 
-### As a Python module (recommended for AgentHub)
+### As a Python module (recommended for Polter)
 
 ```python
 from junie_adapter import JunieAdapter, AdapterRequest
@@ -94,7 +94,7 @@ junie_adapter/
 ├── worktree_manager.py   # Git worktree lifecycle, changed-file detection
 ├── worker_executor.py    # Worker execution with isolation and concurrency
 ├── context_provider.py   # Pluggable context provider interface
-└── adapter.py            # Stable adapter interface for AgentHub
+└── adapter.py            # Stable adapter interface for Polter
 ```
 
 ### Module Overview
@@ -112,7 +112,7 @@ junie_adapter/
 | `worktree_manager.py` | Git worktree creation (with real branches), changed-file detection, diff reporting |
 | `worker_executor.py` | Worker execution with isolation, concurrency limits, PID tracking, `WorkerRegistry` |
 | `context_provider.py` | Pluggable `ContextProvider` protocol with memory, vault map, and composite implementations |
-| `adapter.py` | `JunieAdapter` class — clean typed interface for AgentHub integration |
+| `adapter.py` | `JunieAdapter` class — clean typed interface for Polter integration |
 
 ## Configuration
 
@@ -165,7 +165,7 @@ The Python package, HTTP service, and Git worktree isolation work on all platfor
 
 ## REST API
 
-JunieHub provides a comprehensive REST API for task management, monitoring, and AgentHub integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
+Ecton provides a comprehensive REST API for task management, monitoring, and Polter integration. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication.
 
 ### Health & Status
 
@@ -296,11 +296,11 @@ Prefix a user message with `### Task:` to bypass Junie and send the request dire
 }
 ```
 
-## AgentHub Integration
+## Polter Integration
 
 ### Adapter Interface (Recommended)
 
-The `JunieAdapter` class provides a clean, typed interface for AgentHub:
+The `JunieAdapter` class provides a clean, typed interface for Polter:
 
 ```python
 from junie_adapter import JunieAdapter, AdapterRequest, AdapterResult
@@ -428,7 +428,7 @@ The registry is automatically updated when `execute_worker` starts and completes
 
 ### Custom Context Injection
 
-Instead of using MEMORY.md, AgentHub can provide its own context via the pluggable `ContextProvider` interface:
+Instead of using MEMORY.md, Polter can provide its own context via the pluggable `ContextProvider` interface:
 
 ```python
 from junie_adapter import (
@@ -644,17 +644,17 @@ Optional Linux deployment helpers (not required for module usage):
 
 ## Migration from JunieOrchestrator
 
-JunieHub was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
+Ecton was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
 
 ### What Changed
 
-- **Product name** — Changed from "Junie Orchestrator" to "JunieHub" in documentation, log messages, and service descriptions.
-- **Persistent storage** — New SQLite-based storage for tasks, projects, sessions, and workers. Configured via `JUNIEHUB_DB_PATH` (defaults to `WORKSPACE_PATH/juniehub.db`).
+- **Product name** — Changed from "Junie Orchestrator" to "Ecton" in documentation, log messages, and service descriptions.
+- **Persistent storage** — New SQLite-based storage for tasks, projects, sessions, and workers. Configured via `Ecton_DB_PATH` (defaults to `WORKSPACE_PATH/Ecton.db`).
 - **Expanded API** — New endpoints: `/health`, `/ready`, `/api/v1/projects`, `/api/v1/tasks`, `/api/v1/workers`, `/api/v1/sessions`, `/api/v1/queue`.
 - **Security** — Bearer token auth now uses constant-time comparison (`hmac.compare_digest`).
 - **Python 3.14** — All tests updated for Python 3.14 compatibility (removed deprecated `asyncio.get_event_loop()`).
 - **CI/CD** — GitHub Actions workflow for testing across Python 3.10–3.13 and linting.
-- **Systemd service** — Service name changed from `junie-orchestrator` to `juniehub`.
+- **Systemd service** — Service name changed from `junie-orchestrator` to `Ecton`.
 
 ### Backward Compatibility
 
@@ -679,17 +679,17 @@ JunieHub was previously named **JunieOrchestrator**. The package name `junie_ada
 2. **Add new environment variables** (optional):
    ```bash
    # Add to .env if you want persistent storage
-   JUNIEHUB_DB_PATH=/path/to/juniehub.db
+   Ecton_DB_PATH=/path/to/Ecton.db
    ```
 
 3. **Update API clients** — The new `/api/v1/*` endpoints are additive; existing `/v1/*` endpoints are unchanged.
 
 ### Repository Rename
 
-The GitHub repository may need to be renamed separately from `JunieOrchestrator` to `JunieHub`. This is a manual step in GitHub settings. After renaming, update your local clone:
+The GitHub repository may need to be renamed separately from `JunieOrchestrator` to `Ecton`. This is a manual step in GitHub settings. After renaming, update your local clone:
 
 ```bash
-git remote set-url origin https://github.com/LukaG712/JunieHub.git
+git remote set-url origin https://github.com/LukaG712/Ecton.git
 ```
 
 ## License

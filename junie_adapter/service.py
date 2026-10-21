@@ -2,6 +2,7 @@ import hmac
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -22,6 +23,36 @@ from .worker_executor import _worker_semaphore, get_worker_registry
 
 runs_logger = logging.getLogger("runs")
 
+
+class JSONFormatter(logging.Formatter):
+    """Formats log records as JSON for machine-readable log aggregation."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "service": "Ecton",
+        }
+        if record.exc_info and record.exc_info[0] is not None:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data, default=str)
+
+
+def _setup_json_logging():
+    """Configure root logger to use JSON formatting."""
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+    root.addHandler(handler)
+
+
+_setup_json_logging()
+
 # Load environment variables from .env file if present
 load_dotenv()
 
@@ -38,6 +69,12 @@ config: OrchestratorConfig | None = None
 from .persistent_store import PersistentStore
 
 store: PersistentStore | None = None
+
+# Observability: tracing (optional, graceful fallback)
+try:
+    from . import tracing as tracing_module
+except ImportError:
+    tracing_module = None
 
 
 @asynccontextmanager
@@ -57,19 +94,28 @@ async def lifespan(app_instance: FastAPI):
     runs_logger.addHandler(logging.FileHandler(str(runs_log)))
     runs_logger.propagate = False
     # Initialize persistent storage
-    db_path = os.getenv("JUNIEHUB_DB_PATH", str(config.workspace_dir / "juniehub.db"))
+    db_path = os.getenv("Ecton_DB_PATH", str(config.workspace_dir / "Ecton.db"))
     store = PersistentStore(db_path=db_path)
-    runs_logger.info("JunieHub started")
+    # Initialize OpenTelemetry tracing
+    if tracing_module is not None:
+        try:
+            tracing_module.setup_tracing(app_instance)
+        except Exception:
+            pass  # Tracing is optional
+    runs_logger.info("Ecton started")
     yield
     if store:
         store.close()
-    runs_logger.info("JunieHub shutting down")
+    runs_logger.info("Ecton shutting down")
 
 
 app = FastAPI(
-    title="JunieHub",
+    title="Ecton",
     version="1.0.0",
-    description="JunieHub — coding-agent orchestration backend",
+    description="Ecton — coding-agent orchestration backend with worktree isolation and SQLite persistence",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
@@ -289,7 +335,7 @@ async def stream_from_ollama_progress(messages: list, model: str = "junie-workfl
 @app.get("/health")
 async def health_check():
     """Basic health check — returns 200 if the service is running."""
-    return {"status": "ok", "service": "JunieHub"}
+    return {"status": "ok", "service": "Ecton"}
 
 
 @app.get("/ready")
@@ -301,7 +347,7 @@ async def readiness_check():
         raise HTTPException(status_code=503, detail="Database not initialized")
     return {
         "status": "ready",
-        "service": "JunieHub",
+        "service": "Ecton",
         "version": "1.0.0",
         "max_concurrent_workers": config.max_concurrent_workers,
         "isolation_mode": config.isolation_mode.value,
@@ -676,3 +722,70 @@ async def chat_completions(request: Request):
         )
     else:
         return make_completion_response(reply)
+
+
+# ─── Database Backup ─────────────────────────────────────────────────────────
+
+import sqlite3 as _sqlite3
+import shutil as _shutil
+
+_Ecton_BACKUP_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "backups"
+
+
+@app.post("/api/v1/backup")
+async def create_backup(request: Request):
+    """Create a backup of the Ecton SQLite database."""
+    await require_auth(request)
+
+    _Ecton_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    db_path_str = os.getenv("Ecton_DB_PATH", str(config.workspace_dir / "Ecton.db")) if config else None
+    if not db_path_str:
+        raise HTTPException(status_code=500, detail="Database path not configured")
+
+    source_db = Path(db_path_str)
+    if not source_db.exists():
+        raise HTTPException(status_code=404, detail="Database file not found")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"Ecton_backup_{timestamp}.db"
+    backup_path = _Ecton_BACKUP_DIR / backup_name
+
+    try:
+        source_conn = _sqlite3.connect(str(source_db), timeout=10.0)
+        backup_conn = _sqlite3.connect(str(backup_path))
+        source_conn.backup(backup_conn)
+        backup_conn.close()
+        source_conn.close()
+
+        file_size = backup_path.stat().st_size
+        return {
+            "status": "ok",
+            "backup_file": backup_name,
+            "size_bytes": file_size,
+            "created_at": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        if backup_path.exists():
+            backup_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+
+
+@app.get("/api/v1/backups")
+async def list_backups(request: Request):
+    """List all available Ecton database backups."""
+    await require_auth(request)
+
+    if not _Ecton_BACKUP_DIR.exists():
+        return {"backups": [], "count": 0}
+
+    backups = []
+    for f in sorted(_Ecton_BACKUP_DIR.glob("Ecton_backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True):
+        stat = f.stat()
+        backups.append({
+            "file": f.name,
+            "size_bytes": stat.st_size,
+            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+
+    return {"backups": backups, "count": len(backups)}

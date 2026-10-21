@@ -1,6 +1,6 @@
 """Tests for the JunieAdapter interface.
 
-Verifies that the adapter provides a clean, typed API for AgentHub integration
+Verifies that the adapter provides a clean, typed API for Polter integration
 without requiring private implementation details.
 """
 

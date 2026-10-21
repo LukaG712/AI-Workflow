@@ -30,7 +30,7 @@ fi
 
 PORT="${PORT:-8000}"
 
-echo "Starting JunieHub on port $PORT ..."
+echo "Starting Ecton on port $PORT ..."
 echo "Press Ctrl+C to stop."
 
 # ── Start uvicorn ─────────────────────────────────────────────────────────────
