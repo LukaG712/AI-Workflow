@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This report assesses whether multiple independent Junie CLI processes can be orchestrated externally (by Evershade Valley) to collaborate on the same software project. Based on investigation of the installed Junie CLI (v26.10.12) and official documentation, **limited multi-agent execution is feasible**, but with significant constraints that require sequential execution by default.
+This report assesses whether multiple independent Junie CLI processes can be orchestrated externally (by Greenie) to collaborate on the same software project. Based on investigation of the installed Junie CLI (v26.10.12) and official documentation, **limited multi-agent execution is feasible**, but with significant constraints that require sequential execution by default.
 
 **Status**: Implemented. The adapter now provides worktree isolation, concurrency limits, a `WorkerRegistry` for active worker tracking, and a clean `JunieAdapter` interface. Default concurrency is 1 (JUNIE-3394). All changes are tested (114 tests pass, 1 skipped).
 
@@ -91,11 +91,11 @@ Junie CLI supports subagents that the main agent can delegate tasks to. However:
 ### Relevance to External Orchestration
 
 Built-in subagents cannot be used for external multi-agent orchestration because:
-- Evershade Valley cannot directly invoke or control a subagent.
+- Greenie cannot directly invoke or control a subagent.
 - Subagent lifecycle is managed by the parent Junie session.
 - There's no CLI flag to spawn an independent subagent process.
 
-**Conclusion**: Built-in subagents are an internal Junie feature, not a mechanism for external orchestration. Evershade Valley must orchestrate multiple independent Junie CLI invocations.
+**Conclusion**: Built-in subagents are an internal Junie feature, not a mechanism for external orchestration. Greenie must orchestrate multiple independent Junie CLI invocations.
 
 ---
 
@@ -134,7 +134,7 @@ The existing `junie_runner.py` already handles rate limiting:
 
 ## 5. Which orchestration responsibilities must be implemented externally?
 
-Since Junie CLI does not provide external orchestration primitives, **all** of the following must be implemented by Evershade Valley:
+Since Junie CLI does not provide external orchestration primitives, **all** of the following must be implemented by Greenie:
 
 ### Required External Components
 
@@ -183,9 +183,9 @@ The `junie_adapter` package provides:
 - Worker execution models (`WorkerExecution`, `WorkerStatus`).
 - Output capture, timeout enforcement, and changed-file detection.
 - Pluggable context loading via `ContextProvider` interface (`context_provider.py`).
-- Clean typed adapter interface (`JunieAdapter`) for Evershade Valley integration.
+- Clean typed adapter interface (`JunieAdapter`) for Greenie integration.
 
-**Conclusion**: Evershade Valley owns orchestration policy. The adapter provides execution and isolation primitives.
+**Conclusion**: Greenie owns orchestration policy. The adapter provides execution and isolation primitives.
 
 ---
 
@@ -196,16 +196,16 @@ The `junie_adapter` package provides:
 The simplest reliable workflow is **sequential workers with worktree isolation**:
 
 ```
-1. Evershade Valley receives a high-level task.
-2. Evershade Valley splits the task into independent subtasks.
+1. Greenie receives a high-level task.
+2. Greenie splits the task into independent subtasks.
 3. For each subtask (sequentially):
    a. Create a Git worktree with a unique branch.
    b. Launch Junie CLI in the worktree directory.
    c. Capture output, exit code, and changed files.
    d. Record the WorkerExecution result.
    e. Keep the worktree for review (do not auto-merge).
-4. Evershade Valley reviews all worker results.
-5. Evershade Valley decides which changes to merge.
+4. Greenie reviews all worker results.
+5. Greenie decides which changes to merge.
 ```
 
 ### Why This Works
@@ -236,7 +236,7 @@ Subtask C: "Write integration tests for auth flow"
   → Branch: test/auth-integration
   → Result: 2 test files added
 
-Evershade Valley reviews all three branches, resolves any conflicts, and merges.
+Greenie reviews all three branches, resolves any conflicts, and merges.
 ```
 
 **Conclusion**: Sequential worktree-based execution is the proven, reliable approach. It provides isolation and reviewability without requiring unsupported parallel features.
@@ -304,7 +304,7 @@ The following features have been implemented based on this feasibility analysis:
 ### Architecture
 
 ```
-Evershade Valley (orchestration)
+Greenie (orchestration)
   ↓ AdapterRequest
 JunieAdapter (adapter.py)
   ↓ submit_task()

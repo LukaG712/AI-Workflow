@@ -1,6 +1,6 @@
 """Tests for the JunieAdapter interface.
 
-Verifies that the adapter provides a clean, typed API for Evershade Valley integration
+Verifies that the adapter provides a clean, typed API for Greenie integration
 without requiring private implementation details.
 """
 

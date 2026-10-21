@@ -7,16 +7,16 @@ __________      .__   __
                                \/       
 ```
 
-# Polter
+# Slinker
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com/)
-[![CI](https://github.com/LukaG712/Polter/actions/workflows/ci.yml/badge.svg)](https://github.com/LukaG712/Polter/actions)
+[![CI](https://github.com/LukaG712/Slinker/actions/workflows/ci.yml/badge.svg)](https://github.com/LukaG712/Slinker/actions)
 
-**Polter** is a production-quality coding-agent orchestration backend that executes AI coding tasks through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent SQLite storage, and a comprehensive REST API.
+**Slinker** is a production-quality coding-agent orchestration backend that executes AI coding tasks through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent SQLite storage, and a comprehensive REST API.
 
-It serves as the execution engine for [Evershade Valley](https://github.com/LukaG712/EvershadeValley) and [Spectra](https://github.com/LukaG712/Spectra), and also works standalone as an OpenAI-compatible HTTP service compatible with Open WebUI.
+It serves as the execution engine for [Greenie](https://github.com/LukaG712/Greenie) and [Trapper](https://github.com/LukaG712/Trapper), and also works standalone as an OpenAI-compatible HTTP service compatible with Open WebUI.
 
 ---
 
@@ -43,8 +43,8 @@ It serves as the execution engine for [Evershade Valley](https://github.com/Luka
 
 ```bash
 # Clone the repository
-git clone https://github.com/LukaG712/Polter.git
-cd Polter
+git clone https://github.com/LukaG712/Slinker.git
+cd Slinker
 
 # Install dependencies
 pip install -r requirements.txt
@@ -66,7 +66,7 @@ The service starts on port 8000 by default. Verify it's running:
 
 ```bash
 curl http://localhost:8000/health
-# {"status": "ok", "service": "Polter"}
+# {"status": "ok", "service": "Slinker"}
 ```
 
 ### As a Python Module
@@ -91,15 +91,15 @@ print(f"Changed files: {result.changed_files}")
 print(f"Diff summary: {result.diff_summary}")
 ```
 
-### With Evershade Valley
+### With Greenie
 
-Polter integrates with Evershade Valley via the `polter_provider` module. Configure it in `hub.yaml`:
+Slinker integrates with Greenie via the `Slinker_provider` module. Configure it in `hub.yaml`:
 
 ```yaml
 # hub.yaml
 agents:
   - name: coder
-    runner: polter
+    runner: Slinker
     config:
       api_key: "your-api-key"
       workspace_path: "/path/to/workspace"
@@ -110,10 +110,10 @@ agents:
 ## Architecture
 
 ```
-Polter/
+Slinker/
 ├── junie_adapter/              # Core package
 │   ├── __init__.py             # Public API exports
-│   ├── adapter.py              # JunieAdapter — stable interface for Evershade Valley
+│   ├── adapter.py              # JunieAdapter — stable interface for Greenie
 │   ├── config.py               # OrchestratorConfig, IsolationMode, from_env()
 │   ├── context_provider.py     # Pluggable context loading interface
 │   ├── junie_runner.py         # Junie CLI subprocess execution & JSON parsing
@@ -144,7 +144,7 @@ Polter/
 
 | Module | Responsibility |
 |--------|---------------|
-| `adapter.py` | `JunieAdapter` — clean typed interface for Evershade Valley integration |
+| `adapter.py` | `JunieAdapter` — clean typed interface for Greenie integration |
 | `config.py` | `OrchestratorConfig` dataclass, `IsolationMode` enum, env loading |
 | `context_provider.py` | Pluggable `ContextProvider` protocol with 4 built-in implementations |
 | `junie_runner.py` | Subprocess management, JSON parsing, rate-limit retries, timeouts |
@@ -169,7 +169,7 @@ All settings are loaded from environment variables. See `.env.example` for the f
 |----------|---------|-------------|
 | `API_KEY` | *(required)* | Bearer token for authentication |
 | `WORKSPACE_PATH` | temp directory | Where Junie does project work |
-| `Polter_DB_PATH` | `WORKSPACE_PATH/Polter.db` | SQLite database path |
+| `Slinker_DB_PATH` | `WORKSPACE_PATH/Slinker.db` | SQLite database path |
 | `JUNIE_TIMEOUT` | `1800` | Junie CLI timeout in seconds |
 | `JUNIE_BIN` | `junie` | Path to Junie binary |
 | `PORT` | `8000` | HTTP service port |
@@ -193,7 +193,7 @@ All settings are loaded from environment variables. See `.env.example` for the f
 
 ## REST API
 
-Polter provides a comprehensive REST API. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication. OpenAPI documentation is available at `/docs` and `/redoc`.
+Slinker provides a comprehensive REST API. All `/api/v1/*` endpoints require `Authorization: Bearer <API_KEY>` authentication. OpenAPI documentation is available at `/docs` and `/redoc`.
 
 ### Health & Status
 
@@ -317,11 +317,11 @@ Prefix a user message with `### Task:` to bypass Junie and send the request dire
 
 ---
 
-## Evershade Valley Integration
+## Greenie Integration
 
 ### Adapter Interface (Recommended)
 
-The `JunieAdapter` class provides a clean, typed interface for Evershade Valley:
+The `JunieAdapter` class provides a clean, typed interface for Greenie:
 
 ```python
 from junie_adapter import JunieAdapter, AdapterRequest, AdapterResult
@@ -333,7 +333,7 @@ adapter = JunieAdapter(
 
 # Check health
 if not adapter.check_health():
-    raise RuntimeError("Polter is not available")
+    raise RuntimeError("Slinker is not available")
 
 # Submit a task
 request = AdapterRequest(
@@ -414,7 +414,7 @@ await registry.remove("worker-1")
 
 ### Custom Context Injection
 
-Polter provides a pluggable `ContextProvider` interface for custom context loading:
+Slinker provides a pluggable `ContextProvider` interface for custom context loading:
 
 ```python
 from junie_adapter import (
@@ -495,7 +495,7 @@ print(summary)
 
 ## Multi-Agent Execution
 
-Polter supports multiple independent workers with important limitations:
+Slinker supports multiple independent workers with important limitations:
 
 ### JUNIE-3394 Limitation
 
@@ -549,20 +549,20 @@ The Python package, HTTP service, and Git worktree isolation work on all platfor
 
 ## Docker Deployment
 
-Build and run Polter in a container:
+Build and run Slinker in a container:
 
 ```bash
 # Build the image
-docker build -t polter:latest .
+docker build -t Slinker:latest .
 
 # Run with environment variables
 docker run -d \
-  --name polter \
+  --name Slinker \
   -p 8000:8000 \
   -e API_KEY=your-secret-key \
   -e WORKSPACE_PATH=/workspace \
   -v $(pwd)/workspace:/workspace \
-  polter:latest
+  Slinker:latest
 ```
 
 Or use the unified `docker compose up` from the [Workflow](https://github.com/LukaG712/Workflow) parent repository to run all three services together.
@@ -650,11 +650,11 @@ Git worktree paths use forward slashes in `git worktree list` output. The adapte
 
 ## Migration from JunieOrchestrator
 
-Polter was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
+Slinker was previously named **JunieOrchestrator**. The package name `junie_adapter` remains unchanged for backward compatibility.
 
 ### What Changed
 
-- **Product name** — Changed from "Junie Orchestrator" to "Polter" in documentation, log messages, and service descriptions.
+- **Product name** — Changed from "Junie Orchestrator" to "Slinker" in documentation, log messages, and service descriptions.
 - **Persistent storage** — New SQLite-based storage for tasks, projects, sessions, and workers.
 - **Expanded API** — New endpoints: `/health`, `/ready`, `/api/v1/projects`, `/api/v1/tasks`, `/api/v1/workers`, `/api/v1/sessions`, `/api/v1/queue`.
 - **Security** — Bearer token auth now uses constant-time comparison (`hmac.compare_digest`).

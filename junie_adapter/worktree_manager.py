@@ -975,7 +975,7 @@ def get_change_summary(worktree_path: Path, base_commit: str | None = None) -> s
             the worktree state against this commit instead of HEAD.
 
     Returns:
-        Human-readable summary string suitable for Evershade Valley reporting.
+        Human-readable summary string suitable for Greenie reporting.
 
     Raises:
         RuntimeError: If Git commands fail to inspect the worktree.

@@ -1,6 +1,6 @@
-"""OpenTelemetry tracing for Polter.
+"""OpenTelemetry tracing for Slinker.
 
-Mirrors Evershade Valley's tracing.py but configured for the Polter service name.
+Mirrors Greenie's tracing.py but configured for the Slinker service name.
 """
 
 import os
@@ -18,13 +18,13 @@ _tracer: Optional[trace.Tracer] = None
 
 
 def get_tracer() -> trace.Tracer:
-    return _tracer or trace.get_tracer("Polter")
+    return _tracer or trace.get_tracer("Slinker")
 
 
 def setup_tracing(app: Optional[FastAPI] = None) -> TracerProvider:
     global _tracer
 
-    service_name = os.environ.get("OTEL_SERVICE_NAME", "Polter")
+    service_name = os.environ.get("OTEL_SERVICE_NAME", "Slinker")
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
     sample_ratio = float(os.environ.get("OTEL_TRACES_SAMPLE_RATIO", "1.0"))
 
