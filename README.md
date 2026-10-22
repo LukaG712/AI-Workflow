@@ -1,12 +1,3 @@
-```
-__________      .__   __                
-\______   \____ |  |_/  |_  ___________ 
- |     ___/  _ \|  |\   __\/ __ \_  __ \
- |    |  (  <_> )  |_|  | \  ___/|  | \/
- |____|   \____/|____/__|  \___  >__|   
-                               \/       
-```
-
 # Slinker
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
