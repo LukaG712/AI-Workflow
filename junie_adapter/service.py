@@ -2,6 +2,7 @@ import hmac
 import json
 import logging
 import os
+import sqlite3
 import sys
 import time
 import uuid
@@ -17,6 +18,7 @@ from .config import OrchestratorConfig
 from .junie_runner import run_junie_task
 from .memory_loader import load_context, load_vault_map
 from .models import SessionLog, TaskStatus
+from .persistent_store import PersistentStore
 from .prompt_refiner import ollama_chat, ollama_chat_stream, refine_prompt
 from .session_logger import log_session
 from .worker_executor import _worker_semaphore, get_worker_registry
@@ -66,8 +68,6 @@ _junie_busy = False
 config: OrchestratorConfig | None = None
 
 # Global persistent store
-from .persistent_store import PersistentStore
-
 store: PersistentStore | None = None
 
 # Observability: tracing (optional, graceful fallback)
@@ -726,9 +726,6 @@ async def chat_completions(request: Request):
 
 # ─── Database Backup ─────────────────────────────────────────────────────────
 
-import sqlite3 as _sqlite3
-import shutil as _shutil
-
 _Slinker_BACKUP_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "backups"
 
 
@@ -752,8 +749,8 @@ async def create_backup(request: Request):
     backup_path = _Slinker_BACKUP_DIR / backup_name
 
     try:
-        source_conn = _sqlite3.connect(str(source_db), timeout=10.0)
-        backup_conn = _sqlite3.connect(str(backup_path))
+        source_conn = sqlite3.connect(str(source_db), timeout=10.0)
+        backup_conn = sqlite3.connect(str(backup_path))
         source_conn.backup(backup_conn)
         backup_conn.close()
         source_conn.close()
@@ -768,7 +765,7 @@ async def create_backup(request: Request):
     except Exception as e:
         if backup_path.exists():
             backup_path.unlink()
-        raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Backup failed: {e!s}")
 
 
 @app.get("/api/v1/backups")

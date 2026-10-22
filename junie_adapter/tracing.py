@@ -4,24 +4,23 @@ Mirrors Greenie's tracing.py but configured for the Slinker service name.
 """
 
 import os
-from typing import Optional
 
 from fastapi import FastAPI, Request, Response
 from opentelemetry import trace
+from opentelemetry.propagate import inject
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
-from opentelemetry.propagate import inject
 
 
-_tracer: Optional[trace.Tracer] = None
+_tracer: trace.Tracer | None = None
 
 
 def get_tracer() -> trace.Tracer:
     return _tracer or trace.get_tracer("Slinker")
 
 
-def setup_tracing(app: Optional[FastAPI] = None) -> TracerProvider:
+def setup_tracing(app: FastAPI | None = None) -> TracerProvider:
     global _tracer
 
     service_name = os.environ.get("OTEL_SERVICE_NAME", "Slinker")
@@ -41,6 +40,7 @@ def setup_tracing(app: Optional[FastAPI] = None) -> TracerProvider:
 
     if endpoint:
         try:
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
             exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
             provider.add_span_processor(BatchSpanProcessor(exporter))

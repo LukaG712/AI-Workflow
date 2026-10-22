@@ -11,7 +11,6 @@ Introduces a runner interface so that:
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
 
 
 class IsolationLevel(str, Enum):
@@ -37,7 +36,7 @@ class RunnerRequirements:
     """Required binaries and configuration for a runner."""
     binaries: list[str] = field(default_factory=list)
     env_vars: list[str] = field(default_factory=list)
-    min_version: Optional[str] = None
+    min_version: str | None = None
 
 
 @dataclass
@@ -45,12 +44,12 @@ class TaskRequest:
     """A task to be executed by a runner."""
     prompt: str
     context: dict = field(default_factory=dict)
-    repository_path: Optional[str] = None
-    branch: Optional[str] = None
+    repository_path: str | None = None
+    branch: str | None = None
     isolation_level: IsolationLevel = IsolationLevel.WORKTREE
     timeout_seconds: int = 300
-    max_tokens: Optional[int] = None
-    model: Optional[str] = None
+    max_tokens: int | None = None
+    model: str | None = None
 
 
 @dataclass
@@ -60,7 +59,7 @@ class TaskResult:
     output: str = ""
     files_modified: list[str] = field(default_factory=list)
     files_created: list[str] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
     duration_seconds: float = 0
     token_usage: dict = field(default_factory=dict)
     steps: list[dict] = field(default_factory=list)
@@ -113,7 +112,7 @@ class RunnerRegistry:
 
     def __init__(self):
         self._runners: dict[str, BaseRunner] = {}
-        self._default: Optional[str] = None
+        self._default: str | None = None
 
     def register(self, runner: BaseRunner):
         """Register a runner implementation."""
@@ -127,7 +126,7 @@ class RunnerRegistry:
             raise ValueError(f"Runner '{name}' not registered")
         self._default = name
 
-    def get(self, name: Optional[str] = None) -> BaseRunner:
+    def get(self, name: str | None = None) -> BaseRunner:
         """Get a runner by name, or the default."""
         name = name or self._default
         if name is None:
@@ -158,16 +157,15 @@ class RunnerRegistry:
             })
         return result
 
-    def select_for_task(self, task: TaskRequest) -> Optional[BaseRunner]:
+    def select_for_task(self, task: TaskRequest) -> BaseRunner | None:
         """Select the best runner for a given task.
         
         Considers isolation level, capabilities, and availability.
         """
         candidates = []
         for runner in self._runners.values():
-            if task.isolation_level in runner.capabilities.supports_isolation:
-                if runner.check_available():
-                    candidates.append(runner)
+            if task.isolation_level in runner.capabilities.supports_isolation and runner.check_available():
+                candidates.append(runner)
         
         if not candidates:
             return None

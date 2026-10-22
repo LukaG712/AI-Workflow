@@ -937,10 +937,10 @@ def get_worker_diff(
             if diff_content and not diff_content.startswith("("):
                 lines = diff_content.strip().split("\n")
                 added = sum(
-                    1 for l in lines if l.startswith("+") and not l.startswith("+++")
+                    1 for line in lines if line.startswith("+") and not line.startswith("+++")
                 )
                 removed = sum(
-                    1 for l in lines if l.startswith("-") and not l.startswith("---")
+                    1 for line in lines if line.startswith("-") and not line.startswith("---")
                 )
                 summary = f"{status}: {file_path} (+{added}/-{removed})"
 
