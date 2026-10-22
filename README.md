@@ -1,9 +1,14 @@
 # Slinker
 
+> *"These ghosts seem unassailable, don't worry they're still inhalable!"*
+> ~ **Prof. E. Gadd**, Luigi's Mansion 3
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com/)
 [![CI](https://github.com/LukaG712/Slinker/actions/workflows/ci.yml/badge.svg)](https://github.com/LukaG712/Slinker/actions)
+
+**Luigi's Mansion origin:** *Slinker* ~ stealthy ghost enemies from Luigi's Mansion 3 that slink along walls and floors.
 
 **Slinker** is a production-quality coding-agent orchestration backend that executes AI coding tasks through the [Junie CLI](https://github.com/jetbrains/Junie) with Git worktree isolation, persistent SQLite storage, and a comprehensive REST API.
 
@@ -665,6 +670,8 @@ Slinker was previously named **JunieOrchestrator**. The package name `junie_adap
 ## License
 
 MIT
+
+**Repo:** [LukaG712/Slinker](https://github.com/LukaG712/Slinker)
 
 ---
 
