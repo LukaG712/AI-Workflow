@@ -736,7 +736,11 @@ async def create_backup(request: Request):
 
     _Slinker_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    db_path_str = os.getenv("Slinker_DB_PATH", str(config.workspace_dir / "Slinker.db")) if config else None
+    db_path_str = (
+        os.getenv("Slinker_DB_PATH", str(config.workspace_dir / "Slinker.db"))
+        if config
+        else None
+    )
     if not db_path_str:
         raise HTTPException(status_code=500, detail="Database path not configured")
 
@@ -777,12 +781,18 @@ async def list_backups(request: Request):
         return {"backups": [], "count": 0}
 
     backups = []
-    for f in sorted(_Slinker_BACKUP_DIR.glob("Slinker_backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for f in sorted(
+        _Slinker_BACKUP_DIR.glob("Slinker_backup_*.db"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
         stat = f.stat()
-        backups.append({
-            "file": f.name,
-            "size_bytes": stat.st_size,
-            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
+        backups.append(
+            {
+                "file": f.name,
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            }
+        )
 
     return {"backups": backups, "count": len(backups)}

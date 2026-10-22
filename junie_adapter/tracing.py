@@ -26,10 +26,12 @@ def setup_tracing(app: FastAPI | None = None) -> TracerProvider:
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
     sample_ratio = float(os.environ.get("OTEL_TRACES_SAMPLE_RATIO", "1.0"))
 
-    resource = Resource.create({
-        "service.name": service_name,
-        "service.version": "1.0.0",
-    })
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": "1.0.0",
+        }
+    )
 
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
@@ -43,6 +45,7 @@ def setup_tracing(app: FastAPI | None = None) -> TracerProvider:
                 OTLPSpanExporter,
             )
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
             exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
             provider.add_span_processor(BatchSpanProcessor(exporter))
         except Exception:
@@ -53,18 +56,23 @@ def setup_tracing(app: FastAPI | None = None) -> TracerProvider:
     # Auto-instrument FastAPI
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-        FastAPIInstrumentor.instrument_app(app) if app else FastAPIInstrumentor.instrument()
+
+        FastAPIInstrumentor.instrument_app(
+            app
+        ) if app else FastAPIInstrumentor.instrument()
     except ImportError:
         pass
 
     # Auto-instrument HTTPX
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
         HTTPXClientInstrumentor.instrument()
     except ImportError:
         pass
 
     if app:
+
         @app.middleware("http")
         async def trace_middleware(request: Request, call_next: callable) -> Response:
             span_name = f"{request.method} {request.url.path}"
