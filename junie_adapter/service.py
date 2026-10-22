@@ -354,6 +354,66 @@ async def readiness_check():
     }
 
 
+@app.get("/api/capabilities")
+async def api_capabilities():
+    """Report the capabilities supported by this Slinker instance."""
+    return {
+        "service": "Slinker",
+        "version": "1.1.0",
+        "features": {
+            "task_execution": {
+                "supported": True,
+                "description": "Agent task execution via Junie CLI",
+            },
+            "chat_completions": {
+                "supported": True,
+                "description": "OpenAI-compatible chat completions API",
+            },
+            "streaming": {
+                "supported": True,
+                "description": "SSE streaming for chat completions",
+            },
+            "worktree_isolation": {
+                "supported": True,
+                "description": "Git worktree isolation for task execution",
+            },
+            "worker_pool": {
+                "supported": True,
+                "description": "Concurrent worker pool with semaphore",
+            },
+            "persistent_storage": {
+                "supported": True,
+                "description": "SQLite persistent task and session storage",
+            },
+            "project_management": {
+                "supported": True,
+                "description": "Project registration and management",
+            },
+            "queue_management": {
+                "supported": True,
+                "description": "Task queue with status tracking",
+            },
+            "session_logging": {
+                "supported": True,
+                "description": "Session log persistence and retrieval",
+            },
+            "prompt_refinement": {
+                "supported": True,
+                "description": "Prompt refinement via Ollama",
+            },
+            "backup": {
+                "supported": True,
+                "description": "SQLite database backup",
+            },
+            "opentelemetry": {
+                "supported": True,
+                "description": "OpenTelemetry tracing",
+            },
+        },
+        "api_versions": ["v1"],
+    }
+
+
 # ─── Projects ────────────────────────────────────────────────────────────────
 
 
