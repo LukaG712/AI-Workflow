@@ -12,7 +12,6 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
 
-
 _tracer: trace.Tracer | None = None
 
 
@@ -40,8 +39,10 @@ def setup_tracing(app: FastAPI | None = None) -> TracerProvider:
 
     if endpoint:
         try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter,
+            )
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
             exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
             provider.add_span_processor(BatchSpanProcessor(exporter))
         except Exception:
