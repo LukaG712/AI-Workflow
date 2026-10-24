@@ -206,16 +206,18 @@ async def run_junie_task(task: str, config: OrchestratorConfig) -> RunResult:
         except Exception as e:
             last_error = str(e)
             runs_logger.error(f"Junie subprocess error: {e}")
-            if attempt == 0:
-                duration = time.time() - start_time
-                return RunResult(
-                    task=task,
-                    answer=f"Junie error: {e}",
-                    status=TaskStatus.FAILED,
-                    error=str(e),
-                    duration_seconds=duration,
-                )
-            continue
+            # Retry on all attempts, not just after the first one
+            if attempt < len(retry_delays):
+                continue
+            # No more retries left
+            duration = time.time() - start_time
+            return RunResult(
+                task=task,
+                answer=f"Junie error: {e}",
+                status=TaskStatus.FAILED,
+                error=str(e),
+                duration_seconds=duration,
+            )
 
     duration = time.time() - start_time
     return RunResult(
